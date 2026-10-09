@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Every prek hook on all files, the contract tests included: the same as `mise run check`
+  # with LOTSE_BIN set, against a daemon built from the lotse commit in schema/lotse-commit.
+  check:
+    name: every prek hook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The pinned lotse commit
+        id: pin
+        run: echo "sha=$(cat schema/lotse-commit)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: edenhaus/lotse
+          ref: ${{ steps.pin.outputs.sha }}
+          path: .lotse
+          persist-credentials: false
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: .lotse -> target
+      - name: Build the daemon with the fake source
+        # In the checkout: rust-toolchain.toml and .cargo/config.toml are read from there.
+        working-directory: .lotse
+        run: cargo build -q --workspace --all-features --locked --bin lotse
+      - run: mise run check
+        env:
+          LOTSE_BIN: ${{ github.workspace }}/.lotse/target/debug/lotse

@@ -1,0 +1,51 @@
+# Contributor tooling and tasks. `mise install`, then `mise tasks` for the list.
+# Checks live in .pre-commit-config.yaml; `mise run check` runs all of them.
+
+[tools]
+prek = "0.5.4"
+uv = "0.12.23" # every Python client: its Python, dependencies and checks (python/uv.lock)
+
+# Git hooks are installed on every `mise install`, so nobody has to remember.
+[hooks]
+postinstall = "prek install"
+
+[tasks.check]
+description = "Everything CI runs: all prek hooks, tests included, on all files"
+run = "prek run --all-files --stage manual --show-diff-on-failure"
+
+[tasks.dist]
+description = "The Python client's sdist and wheel, checked with twine as PyPI renders them (release.yml publishes them)"
+usage = 'arg "[out]" help="the output directory, emptied first" default="python/dist"'
+run = """
+out="$(mkdir -p "${usage_out}" && cd "${usage_out}" && pwd)"
+rm -f "$out"/*
+cd python
+uv build --quiet --out-dir "$out"
+uv run --locked --isolated --only-group release twine check --strict "$out"/*
+"""
+
+[tasks.schema]
+description = "Sync schema/ with a lotse checkout's committed API bundle and regenerate every client's models and command methods (sync-schema.yml runs it)"
+usage = 'arg "[lotse]" help="the lotse checkout" default="../lotse"'
+run = """
+lotse="${usage_lotse}"
+bundle=crates/lotse-api-types/schema/api.json
+if [ -n "$(git -C "$lotse" status --porcelain -- "$bundle")" ]; then
+  echo "$lotse/$bundle has uncommitted changes: schema/lotse-commit names a commit, so commit them first" >&2
+  exit 1
+fi
+cp "$lotse/$bundle" schema/api.json
+git -C "$lotse" rev-parse HEAD > schema/lotse-commit
+cd python && uv run --locked datamodel-codegen && uv run --locked python scripts/generate_commands.py
+"""
+
+[tasks.contract]
+description = "The contract tests against a daemon built (with the fake source) from a lotse checkout"
+usage = 'arg "[lotse]" help="the lotse checkout" default="../lotse"'
+run = """
+lotse="$(cd "${usage_lotse}" && pwd)"
+pin="$(cat schema/lotse-commit)"
+[ "$(git -C "$lotse" rev-parse HEAD)" = "$pin" ] || echo "warning: $lotse is not at the pinned commit $pin" >&2
+(cd "$lotse" && cargo build -q --workspace --all-features --locked --bin lotse)
+cd python && LOTSE_BIN="$lotse/target/debug/lotse" uv run --locked pytest -p no:cacheprovider
+"""

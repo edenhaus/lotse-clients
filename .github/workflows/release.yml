@@ -1,0 +1,150 @@
+name: release
+
+# Publishes the Python client to PyPI (README.md#releasing).
+#
+# The client's version is the lotse release whose API bundle schema/api.json is, so releasing is
+# a commit on main that sets python/pyproject.toml's version to that release. This workflow then
+# checks the bundle against lotse's tag, builds the sdist and the wheel, attests them, uploads
+# them to PyPI with Trusted Publishing and records the release as the tag
+# `lotse-client-v<version>` (release-plz's `<package>-v<version>`) with a GitHub release carrying
+# the same files. No one tags by hand: a version that already has its tag releases nothing.
+#
+# A failed run is resumed with "Re-run failed jobs"; PyPI refuses a file it already has, so a
+# re-run of all jobs after the upload fails at the upload.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# A release in progress is never cancelled; the next push waits for it.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  MISE_AUTO_INSTALL: "false" # each job installs the tools it names, not the whole mise.toml
+
+jobs:
+  version:
+    name: the version to release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # the checkout and its tags
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the tags say what is released already
+          persist-credentials: false
+      - name: Read the version and look for its tag
+        id: version
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("python/pyproject.toml", "rb"))["project"]["version"])')"
+          tag="lotse-client-v$version"
+          if [ "$version" = 0.0.0 ]; then
+            echo "Version 0.0.0: no lotse release to follow yet, nothing to publish."
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag exists: lotse-client $version is released already."
+            exit 0
+          fi
+          { echo "version=$version"; echo "tag=$tag"; } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build and check the sdist and the wheel
+    needs: version
+    if: needs.version.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # the checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: edenhaus/lotse
+          ref: v${{ needs.version.outputs.version }}
+          path: .lotse
+          sparse-checkout: crates/lotse-api-types/schema
+          persist-credentials: false
+      # The version promises the API of that lotse release: a client generated from another
+      # bundle must not carry its number.
+      - name: Check the bundle is the lotse release's
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if ! cmp -s schema/api.json .lotse/crates/lotse-api-types/schema/api.json; then
+            echo "::error::schema/api.json is not the API bundle of lotse v$VERSION: sync the schema from that tag first (sync-schema with ref v$VERSION)"
+            exit 1
+          fi
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          install_args: uv
+          cache: false # nothing cached reaches a release job
+      - run: mise run dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: python/dist/
+          if-no-files-found: error
+
+  # The only job with an OIDC token, and the only one in the `pypi` environment that PyPI's
+  # trusted publisher names; it runs no code from the repository.
+  publish:
+    name: attest and publish to PyPI
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/lotse-client/${{ needs.version.outputs.version }}/
+    permissions:
+      id-token: write # Trusted Publishing, and the Sigstore certificates of the attestations
+      attestations: write # store GitHub's attestation
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: Attest the provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+      # Also uploads a PEP 740 attestation of each file to PyPI (`attestations`, on by default).
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+
+  release:
+    name: tag and release on GitHub
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the tag and the release
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: Tag this commit and release the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          envsubst '$VERSION $GH_REPO' > notes.md <<'EOF'
+          The Python client of the control API of lotse $VERSION, generated from that release's API bundle: [lotse-client $VERSION on PyPI](https://pypi.org/project/lotse-client/$VERSION/).
+
+          ## Verify
+
+          ```sh
+          gh attestation verify lotse_client-$VERSION-py3-none-any.whl --repo $GH_REPO
+          ```
+          EOF
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "lotse-client $VERSION" --notes-file notes.md

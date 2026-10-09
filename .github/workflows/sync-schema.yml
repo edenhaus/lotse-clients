@@ -1,0 +1,85 @@
+name: sync-schema
+
+# Opens, or updates, the PR that brings lotse's API schema here and regenerates every
+# client's models and command methods. lotse's CI (ci.yml) dispatches `lotse-schema` when a push to its main
+# changes the schema; run it by hand to sync from any ref. The PR's CI runs the contract
+# tests against that commit.
+on:
+  repository_dispatch:
+    types: [lotse-schema]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: lotse commit, branch or tag to sync from
+        default: main
+
+permissions: {}
+
+# A newer schema replaces an older one, so a newer run makes a running one moot.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: sync the schema from lotse
+    runs-on: ubuntu-latest
+    steps:
+      # The app's token, not GITHUB_TOKEN: a PR opened with GITHUB_TOKEN runs no CI.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          client-id: ${{ vars.LOTSE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.LOTSE_BOT_PRIVATE_KEY }}
+          permission-contents: write # push the branch
+          permission-pull-requests: write # open, edit or close the PR
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: edenhaus/lotse
+          ref: ${{ github.event.client_payload.sha || inputs.ref || 'main' }}
+          path: .lotse
+          persist-credentials: false
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+      - run: mise run schema .lotse
+      - name: The synced lotse commit
+        id: pin
+        run: echo "sha=$(cat schema/lotse-commit)" >> "$GITHUB_OUTPUT"
+      # One branch: a later sync replaces the open PR's commit, and closes the PR when main
+      # already matches. A script rather than an action, so the write token reaches no
+      # third-party code.
+      - name: Open or update the PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          branch=sync/lotse-schema
+          title="chore(schema): sync with lotse ${SHA:0:12}"
+          body="The API schema of lotse at edenhaus/lotse@$SHA, and every client's models and command methods regenerated from it.
+
+          CI runs the contract tests against that commit. A change the generators cannot follow fails them: push the fix to this branch, but know that the next schema change on lotse's main replaces the branch."
+          state="$(gh pr view "$branch" --json state --jq .state 2>/dev/null || true)"
+          git add schema python/src/lotse_client/models.py python/src/lotse_client/_commands.py
+          if git diff --cached --quiet; then
+            echo "main already matches lotse $SHA"
+            if [ "$state" = OPEN ]; then
+              gh pr close "$branch" --delete-branch --comment "main matches lotse $SHA now."
+            fi
+            exit 0
+          fi
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git switch -q -C "$branch"
+          git -c user.name="${APP_SLUG}[bot]" \
+            -c user.email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" \
+            commit -q -m "$title"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push -q --force origin "$branch"
+          if [ "$state" = OPEN ]; then
+            gh pr edit "$branch" --title "$title" --body "$body"
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body "$body"
+          fi

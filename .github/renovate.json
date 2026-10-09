@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":semanticCommits",
+    "group:allNonMajor",
+    "schedule:weekly"
+  ],
+  "labels": ["dependencies"],
+  "lockFileMaintenance": { "enabled": true },
+  "pre-commit": { "enabled": true },
+  "packageRules": [
+    {
+      "description": "ruff in the pre-commit hook and in python/pyproject.toml, updated together so the hook and `uv run ruff` never disagree",
+      "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
+      "groupName": "ruff"
+    }
+  ]
+}

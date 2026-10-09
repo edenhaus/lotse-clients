@@ -1,0 +1,79 @@
+# The single definition of every check. prek runs it:
+#   - on `git commit`:  everything below except the tests, on the changed files
+#   - on `commit-msg`:  the Conventional Commits check
+#   - on `git push`:    the tests
+#   - `mise run check` and CI: all of it, on all files (`--stage manual`)
+# `mise install` installs the git hooks.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit, manual]
+
+repos:
+  # prek implements these natively: no Python environment to download.
+  - repo: builtin
+    hooks:
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: ^LICENSE-
+        stages: [pre-commit, manual] # its manifest also lists pre-push
+      - id: trailing-whitespace
+        exclude: \.md$
+        stages: [pre-commit, manual]
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        exclude: ^(.*/uv\.lock|schema/api\.json)$
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.30.1
+    hooks:
+      - id: zizmor
+        args: ["--persona=pedantic"]
+  # The Python client's lint and format; its settings are in python/pyproject.toml.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10 # the ruff in python/pyproject.toml; Renovate updates both in one PR
+    hooks:
+      - id: ruff-check
+        files: ^python/
+      - id: ruff-format
+        files: ^python/
+  - repo: local
+    hooks:
+      # The Python client (python/). uv installs the Python and the tools pinned in
+      # python/uv.lock on first use.
+      - id: python-client
+        name: python client (models.py and _commands.py are generated from schema/api.json)
+        entry: sh -c 'cd python && uv run --locked datamodel-codegen --check && uv run --locked python scripts/generate_commands.py --check'
+        language: system
+        files: ^(schema/api\.json|python/)
+        pass_filenames: false
+      - id: python-mypy
+        name: mypy --strict (python client)
+        entry: sh -c 'cd python && uv run --locked mypy'
+        language: system
+        files: ^python/
+        pass_filenames: false
+      - id: python-dist
+        name: python client sdist and wheel (uv build, twine check)
+        entry: sh -c 'd="$(mktemp -d)"; mise run dist "$d"; s=$?; rm -rf "$d"; exit $s'
+        language: system
+        files: ^python/(pyproject\.toml|README\.md|LICENSE-|src/)
+        pass_filenames: false
+      - id: python-client-tests
+        name: python client tests (100 % coverage; the contract tests when LOTSE_BIN is set)
+        # `mise run contract` builds a daemon from a lotse checkout and sets LOTSE_BIN.
+        entry: sh -c 'cd python && uv run --locked pytest -p no:cacheprovider'
+        language: system
+        files: ^(schema/api\.json|python/)
+        pass_filenames: false
+        stages: [pre-push, manual]
