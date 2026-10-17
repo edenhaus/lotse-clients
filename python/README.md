@@ -1,8 +1,8 @@
 # lotse-client
 
 Async Python client for the control API of
-[lotse](https://github.com/edenhaus/lotse), the media daemon for RTSP
-cameras and WebRTC viewers. It speaks the API over the daemon's Unix socket with `aiohttp`;
+[lotse](https://github.com/edenhaus/lotse), the memory-safe media daemon
+for IP cameras. It speaks the API over the daemon's Unix socket with `aiohttp`;
 the payload types are frozen dataclasses decoded with `mashumaro`.
 
 ```python

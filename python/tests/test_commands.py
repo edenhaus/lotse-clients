@@ -96,39 +96,63 @@ def command_variants() -> dict[str, dict[str, Any]]:
     return {v["properties"]["type"]["const"]: v for v in command["oneOf"]}
 
 
-class Bound(Commands):
-    """The generated base class on a transport that never sends."""
+class RecordedError(Exception):
+    """What `Recorder` raises in place of sending a command."""
+
+
+class Recorder(Commands):
+    """The generated base class on a transport that records each command instead of sending it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent: list[tuple[str, Model]] = []
+        """Each command with the primitive it went through, `request` or `subscribe`."""
 
     async def _request(self, command: Model) -> dict[str, Any]:
-        raise NotImplementedError
+        self.sent.append(("request", command))
+        raise RecordedError
 
     async def _subscribe[E](self, command: Model, events: BasicDecoder[E]) -> Subscription[E]:
-        raise NotImplementedError
+        del events  # never used: nothing is sent, so no event arrives
+        self.sent.append(("subscribe", command))
+        raise RecordedError
 
 
 def test_the_committed_module_is_what_the_bundle_and_the_models_generate() -> None:
     assert generator.generate(RAW, MODELS_SOURCE) == generator.OUTPUT.read_text()
 
 
-def test_every_command_has_a_method_passing_every_field() -> None:
-    client = Bound()
+async def test_every_command_has_a_method_sending_its_command_with_every_field() -> None:
+    # Every method, whatever the bundle adds: one a sync brings needs no test of its own.
+    client = Recorder()
     for name, variant in command_variants().items():
         namespace, slash, verb = name.partition("/")
         owner = getattr(client, namespace) if slash else client
-        method = getattr(owner, verb if slash else name, None)
+        method = getattr(owner, verb.replace("/", "_") if slash else name, None)
         assert method is not None, f"no method for {name}"
+        fields = set(variant["properties"]) - {"id", "type"}
         parameters = set(inspect.signature(method, annotation_format=Format.FORWARDREF).parameters)
-        assert parameters == set(variant["properties"]) - {"id", "type"}, name
+        assert parameters == fields, name
+        arguments = {field: object() for field in fields}
+        with pytest.raises(RecordedError):
+            await method(**arguments)
+        primitive, command = client.sent.pop()
+        assert primitive == ("subscribe" if name in RAW["events"] else "request"), name
+        assert type(command).__name__ == variant["title"]
+        assert {field: getattr(command, field) for field in fields} == arguments, name
+    assert not client.sent
 
 
 def test_the_api_version_is_the_bundles() -> None:
     assert RAW["api"] == API_VERSION
 
 
-def test_main_writes_the_module_and_check_reports_a_stale_one(
+def test_main_writes_the_module_and_the_api_version_and_check_reports_a_stale_one(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     output = tmp_path / "_commands.py"
+    version = tmp_path / "version.py"
+    version.write_text(generator.VERSION.read_text().replace(API_VERSION, "0.0.1"))
     arguments = [
         "--bundle",
         str(BUNDLE),
@@ -136,11 +160,16 @@ def test_main_writes_the_module_and_check_reports_a_stale_one(
         str(generator.MODELS),
         "--output",
         str(output),
+        "--version-module",
+        str(version),
     ]
     assert generator.main([*arguments, "--check"]) == 1
-    assert "stale" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert f"{output} is stale" in err
+    assert f"{version} is stale" in err
     assert generator.main(arguments) == 0
     assert output.read_text() == generator.OUTPUT.read_text()
+    assert version.read_text() == generator.VERSION.read_text()
     assert generator.main(arguments) == 0  # current: left alone
     assert generator.main([*arguments, "--check"]) == 0
     output.write_text("stale\n")
@@ -158,9 +187,22 @@ def test_main_reports_what_it_cannot_generate(
     models.write_text(TINY_MODELS)
     output = tmp_path / "_commands.py"
     arguments = ["--bundle", str(bundle), "--models", str(models), "--output", str(output)]
+    arguments += ["--version-module", str(tmp_path / "version.py")]
     assert generator.main(arguments) == 2
     assert "no class Missing" in capsys.readouterr().err
     assert not output.exists()
+
+
+def test_the_api_version_line_is_set_to_the_bundles_and_must_be_there_once() -> None:
+    source = '"""Doc."""\n\nAPI_VERSION = "0.1.0"\n"""Its docstring."""\nOTHER = 1\n'
+    assert generator.with_api_version(source, "0.3.0") == source.replace("0.1.0", "0.3.0")
+    assert generator.api_version({"api": "0.3.0"}) == "0.3.0"
+    with pytest.raises(generator.GenerationError, match="names no API version"):
+        generator.api_version({})
+    with pytest.raises(generator.GenerationError, match="has 0 `API_VERSION"):
+        generator.with_api_version("OTHER = 1\n", "0.3.0")
+    with pytest.raises(generator.GenerationError, match="has 2 `API_VERSION"):
+        generator.with_api_version(source + source, "0.3.0")
 
 
 def test_a_namespaced_command_becomes_a_method_of_its_namespace() -> None:

@@ -5,9 +5,10 @@ import pytest
 from lotse_client.version import API_VERSION, WS_PATH, accepts, parse
 
 
-def test_the_client_starts_at_0_1_0_on_the_v0_path() -> None:
-    assert API_VERSION == "0.1.0", "unstable until lotse 1.0"
-    assert WS_PATH == "/v0/ws"
+def test_the_websocket_path_carries_the_major_version() -> None:
+    version = parse(API_VERSION)
+    assert version is not None
+    assert f"/v{version[0]}/ws" == WS_PATH
 
 
 @pytest.mark.parametrize(

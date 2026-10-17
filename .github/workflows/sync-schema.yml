@@ -49,7 +49,9 @@ jobs:
         run: echo "sha=$(cat schema/lotse-commit)" >> "$GITHUB_OUTPUT"
       # One branch: a later sync replaces the open PR's commit, and closes the PR when main
       # already matches. A script rather than an action, so the write token reaches no
-      # third-party code.
+      # third-party code. mise-action's `mise install` installs the repository's git hooks;
+      # the commit and the push skip them, so a sync the hooks reject still becomes a PR,
+      # whose CI runs every hook and the contract tests.
       - name: Open or update the PR
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -63,7 +65,8 @@ jobs:
 
           CI runs the contract tests against that commit. A change the generators cannot follow fails them: push the fix to this branch, but know that the next schema change on lotse's main replaces the branch."
           state="$(gh pr view "$branch" --json state --jq .state 2>/dev/null || true)"
-          git add schema python/src/lotse_client/models.py python/src/lotse_client/_commands.py
+          git add schema python/src/lotse_client/models.py python/src/lotse_client/_commands.py \
+            python/src/lotse_client/version.py
           if git diff --cached --quiet; then
             echo "main already matches lotse $SHA"
             if [ "$state" = OPEN ]; then
@@ -75,9 +78,10 @@ jobs:
           git switch -q -C "$branch"
           git -c user.name="${APP_SLUG}[bot]" \
             -c user.email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" \
-            commit -q -m "$title"
+            commit -q --no-verify -m "$title"
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git -c http.extraheader="AUTHORIZATION: basic $auth" push -q --force origin "$branch"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" \
+            push -q --force --no-verify origin "$branch"
           if [ "$state" = OPEN ]; then
             gh pr edit "$branch" --title "$title" --body "$body"
           else

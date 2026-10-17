@@ -8,6 +8,7 @@ import aiohttp
 import pytest
 
 from lotse_client import (
+    API_VERSION,
     ApiVersionError,
     CannotConnectError,
     CommandError,
@@ -24,7 +25,7 @@ from lotse_client.models import (
     SourceSpec,
     StreamEventStream,
 )
-from tests.helpers import HELLO, STREAM, FakeDaemon
+from tests.helpers import HELLO, NEXT_MAJOR, STREAM, FakeDaemon
 
 INFO = {
     "version": "0.0.0",
@@ -384,7 +385,7 @@ async def test_a_frame_outside_the_contract_ends_the_connection(
         (b"\x00", ProtocolError, "expected hello, got a BINARY frame"),
         ("not json", ProtocolError, "expected hello"),
         ({"type": "event", "id": 1, "event": {}}, ProtocolError, "expected hello"),
-        ({**HELLO, "api": "0.2.0"}, ApiVersionError, "daemon speaks API version 0.2.0"),
+        ({**HELLO, "api": NEXT_MAJOR}, ApiVersionError, f"daemon speaks API version {NEXT_MAJOR}"),
     ],
 )
 async def test_a_wrong_greeting_fails_connect(
@@ -397,7 +398,7 @@ async def test_a_wrong_greeting_fails_connect(
     assert not client.connected
     assert client._session is None, "the client's own session is closed again"
     if isinstance(raised.value, ApiVersionError):
-        assert (raised.value.daemon, raised.value.client) == ("0.2.0", "0.1.0")
+        assert (raised.value.daemon, raised.value.client) == (NEXT_MAJOR, API_VERSION)
 
 
 async def test_a_missing_socket_cannot_connect(fake: FakeDaemon) -> None:

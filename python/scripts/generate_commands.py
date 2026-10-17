@@ -7,16 +7,20 @@ and defaults are copied from the command classes datamodel-code-generator
 wrote to `models.py`, so the methods and the models cannot disagree. A command
 named `domain/verb` becomes the method `verb` of a `DomainCommands` namespace,
 reached as `client.domain.verb(...)`; a command without a slash is a method of
-the client itself.
+the client itself. It also keeps `API_VERSION` in the hand-written
+`version.py` at the bundle's `api`, so a version bump needs no hand-written
+change.
 
 Run it after `datamodel-codegen` (`mise run schema` runs both); `--check`
-fails when the committed module is stale (the `python-client` hook).
+fails when the committed module or `API_VERSION` is stale (the `python-client`
+hook).
 """
 
 import argparse
 import ast
 import json
 import keyword
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -35,6 +39,10 @@ MODELS = PYTHON / "src" / "lotse_client" / "models.py"
 """The models datamodel-code-generator generated from the bundle."""
 OUTPUT = PYTHON / "src" / "lotse_client" / "_commands.py"
 """The module this script writes."""
+VERSION = PYTHON / "src" / "lotse_client" / "version.py"
+"""The hand-written module whose `API_VERSION` this script keeps at the bundle's `api`."""
+API_VERSION_LINE = re.compile(r'^API_VERSION = ".*"$', re.MULTILINE)
+"""The one line of `version.py` this script rewrites."""
 
 LINE_LENGTH = 100
 """ruff's line length (`pyproject.toml`), for the docstrings ruff does not wrap."""
@@ -413,6 +421,25 @@ def grouped[K](methods: list[Method], key: Callable[[Method], K | None]) -> dict
     return groups
 
 
+def api_version(bundle: dict[str, Any]) -> str:
+    """The API version the bundle describes (its `api`)."""
+    version = bundle.get("api")
+    if not isinstance(version, str):
+        msg = "the bundle names no API version"
+        raise GenerationError(msg)
+    return version
+
+
+def with_api_version(source: str, version: str) -> str:
+    """`version.py`'s source with its `API_VERSION` set to `version`."""
+    line = f"API_VERSION = {json.dumps(version)}"
+    updated, count = API_VERSION_LINE.subn(lambda _: line, source)
+    if count != 1:
+        msg = f'version.py has {count} `API_VERSION = "..."` lines, not one'
+        raise GenerationError(msg)
+    return updated
+
+
 def generate(bundle: dict[str, Any], models_source: str) -> str:
     """The module's source, formatted as ruff formats it."""
     models = Models.parse(models_source)
@@ -493,28 +520,38 @@ def ruff(source: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Write the module, or with `--check` report whether it is current."""
+    """Write the module and `API_VERSION`, or with `--check` report whether they are current."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument(
-        "--check", action="store_true", help="fail instead of writing when the module is stale"
+        "--check", action="store_true", help="fail instead of writing when the output is stale"
     )
     parser.add_argument("--bundle", type=Path, default=BUNDLE, help=argparse.SUPPRESS)
     parser.add_argument("--models", type=Path, default=MODELS, help=argparse.SUPPRESS)
     parser.add_argument("--output", type=Path, default=OUTPUT, help=argparse.SUPPRESS)
+    parser.add_argument("--version-module", type=Path, default=VERSION, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        source = generate(json.loads(args.bundle.read_text()), args.models.read_text())
+        bundle = json.loads(args.bundle.read_text())
+        outputs = {
+            args.output: generate(bundle, args.models.read_text()),
+            args.version_module: with_api_version(
+                args.version_module.read_text(), api_version(bundle)
+            ),
+        }
     except GenerationError as err:
         sys.stderr.write(f"{parser.prog}: {err}\n")
         return 2
-    current = args.output.read_text() if args.output.exists() else None
+    stale = [
+        path
+        for path, source in outputs.items()
+        if (path.read_text() if path.exists() else None) != source
+    ]
     if args.check:
-        if current == source:
-            return 0
-        sys.stderr.write(f"{args.output} is stale: run `uv run python {parser.prog}`\n")
-        return 1
-    if current != source:
-        args.output.write_text(source)
+        for path in stale:
+            sys.stderr.write(f"{path} is stale: run `uv run python {parser.prog}`\n")
+        return 1 if stale else 0
+    for path in stale:
+        path.write_text(outputs[path])
     return 0
 
 
