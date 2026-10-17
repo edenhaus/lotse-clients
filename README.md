@@ -1,8 +1,8 @@
 # lotse clients
 
 Client libraries for the control API of
-[lotse](https://github.com/edenhaus/lotse), the camera streaming daemon.
-One directory per language:
+[lotse](https://github.com/edenhaus/lotse), the memory-safe media daemon
+for IP cameras. One directory per language:
 
 | Directory | Package | Used by |
 |---|---|---|

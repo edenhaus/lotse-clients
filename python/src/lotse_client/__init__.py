@@ -1,4 +1,4 @@
-"""Async client for the control API of lotse, the camera streaming daemon.
+"""Async client for the control API of lotse, the memory-safe media daemon for IP cameras.
 
 `LotseClient` speaks the API over the daemon's Unix socket; the payload types
 are in `lotse_client.models`, generated with the command methods from the
