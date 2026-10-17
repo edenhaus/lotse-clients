@@ -31,6 +31,7 @@ runs all of them.
   methods (`_commands.py`) from the bundle and those models by
   `python/scripts/generate_commands.py`: a command `domain/verb` is
   `client.domain.verb(...)`, one without a slash a method of the client.
+  The same script keeps `API_VERSION` in `version.py` at the bundle's `api`.
   Only the WebSocket transport is hand-written.
 
 A new language gets its own directory, generates its models and methods
@@ -44,9 +45,9 @@ its regeneration to the `schema` task.
   fail on stale output. When the change needs hand-written code (a new
   kind of frame in the transport), push it to the sync PR's branch; the
   next sync replaces that branch, so merge first.
-- Python: never edit `python/src/lotse_client/models.py` or `_commands.py`
-  by hand; a method's shape follows from the bundle, so change the Rust
-  types or the generator. Code passes `mypy --strict` and every ruff rule (the few exceptions and
+- Python: never edit `python/src/lotse_client/models.py`, `_commands.py`
+  or `API_VERSION` by hand; a method's shape follows from the bundle, so
+  change the Rust types or the generator. Code passes `mypy --strict` and every ruff rule (the few exceptions and
   why are in `python/pyproject.toml`) with 100 % line and branch coverage;
   test names state the behavior. A ruff bump changes the hook's `rev` and
   the pin in `python/pyproject.toml` together.

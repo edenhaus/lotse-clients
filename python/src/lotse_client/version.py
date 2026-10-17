@@ -10,7 +10,7 @@ is breaking and a patch bump additive. This mirrors
 import re
 
 API_VERSION = "0.1.0"
-"""The API version the models were generated from; a test keeps it equal to the bundle's `api`."""
+"""The bundle's `api`, which `scripts/generate_commands.py` writes here with the command methods."""
 
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 """`MAJOR.MINOR.PATCH` without leading zeros (Semantic Versioning 2.0.0 §2)."""

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from lotse_client.version import WS_PATH
+from lotse_client.version import API_VERSION, WS_PATH
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -15,8 +15,17 @@ if TYPE_CHECKING:
 BUNDLE = Path(__file__).resolve().parents[2] / "schema" / "api.json"
 """The JSON Schema bundle, copied from lotse, that the models are generated from."""
 
-HELLO = {"type": "hello", "api": "0.1.0", "version": "0.0.0", "outputs": ["webrtc"], "features": []}
+HELLO = {
+    "type": "hello",
+    "api": API_VERSION,
+    "version": "0.0.0",
+    "outputs": ["webrtc"],
+    "features": [],
+}
 """The greeting the fake daemon sends unless a test changes it."""
+
+NEXT_MAJOR = f"{int(API_VERSION.split('.', 1)[0]) + 1}.0.0"
+"""An API version no client of this one accepts, whatever `API_VERSION` is."""
 
 
 class FakeDaemon:

@@ -138,6 +138,7 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
+          # shellcheck disable=SC2016 # envsubst's list of the variables to replace, kept literal
           envsubst '$VERSION $GH_REPO' > notes.md <<'EOF'
           The Python client of the control API of lotse $VERSION, generated from that release's API bundle: [lotse-client $VERSION on PyPI](https://pypi.org/project/lotse-client/$VERSION/).
 
