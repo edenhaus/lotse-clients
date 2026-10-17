@@ -1,4 +1,4 @@
-"""Async client for the control API of lotse, the media daemon for RTSP cameras and WebRTC viewers.
+"""Async client for the control API of lotse, the camera streaming daemon.
 
 `LotseClient` speaks the API over the daemon's Unix socket; the payload types
 are in `lotse_client.models`, generated with the command methods from the
