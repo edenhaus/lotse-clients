@@ -9,7 +9,7 @@ is breaking and a patch bump additive. This mirrors
 
 import re
 
-API_VERSION = "0.3.0"
+API_VERSION = "0.1.0"
 """The bundle's `api`, which `scripts/generate_commands.py` writes here with the command methods."""
 
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")

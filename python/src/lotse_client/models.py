@@ -4,7 +4,7 @@
 
 from typing import Annotated, Any, Literal
 from lotse_client._base import Model
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 type LotseControlAPI = Any
@@ -13,30 +13,6 @@ type LotseControlAPI = Any
 type AudioMode = Literal["auto", "off"]
 """
 `stream/put`'s `audio`.
-"""
-
-
-@dataclass(frozen=True, kw_only=True)
-class BackchannelReleaseResult(Model):
-    """
-    `backchannel/release`'s result.
-    """
-
-    talker: str | None = None
-    """
-    The session that held the backchannel when the command arrived, as
-    the worker last reported it; null when it was free. A
-    `talker_changed` with `released` follows on `stream/subscribe` when
-    one was released. A release conditional on a `session_id` reports
-    the talker the same way, whichever session it is: the worker frees
-    the backchannel only if that session still holds it when the
-    release arrives, so the `talker_changed` is what tells.
-    """
-
-
-type BackchannelState = Literal["available", "in_use"]
-"""
-Whether a session holds a source's backchannel.
 """
 
 
@@ -126,54 +102,6 @@ class SchemaCommand(Model):
     The command id.
     """
     type: Literal["schema"] = "schema"
-
-
-@dataclass(frozen=True, kw_only=True)
-class PairingCreateCommand(Model):
-    """
-    `pairing/create`: a one-time pairing code for the control TLS
-    listener, replacing any open one; only on the Unix socket.
-    """
-
-    id: int
-    """
-    The command id.
-    """
-    type: Literal["pairing/create"] = "pairing/create"
-
-
-@dataclass(frozen=True, kw_only=True)
-class ClientsListCommand(Model):
-    """
-    `clients/list`: every client the control TLS listener lets in, fixed
-    by the configuration or enrolled by pairing.
-    """
-
-    id: int
-    """
-    The command id.
-    """
-    type: Literal["clients/list"] = "clients/list"
-
-
-@dataclass(frozen=True, kw_only=True)
-class ClientsRemoveCommand(Model):
-    """
-    `clients/remove`: removes an enrolled client and closes its control
-    connections; idempotent. Over the TLS listener a client may remove
-    only itself; a fixed pin cannot be removed.
-    """
-
-    id: int
-    """
-    The command id.
-    """
-    pin: str
-    """
-    The client certificate's SHA-256, 64 hex digits, optionally with a
-    colon between each pair.
-    """
-    type: Literal["clients/remove"] = "clients/remove"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -290,29 +218,6 @@ class WebrtcCandidateCommand(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class WebrtcRenegotiateCommand(Model):
-    """
-    `webrtc/renegotiate`: a re-offer for an answered session, taken
-    only from the connection that owns it; the result carries the
-    answer.
-    """
-
-    id: int
-    """
-    The command id.
-    """
-    sdp: str
-    """
-    The browser's SDP re-offer.
-    """
-    session_id: str
-    """
-    The session.
-    """
-    type: Literal["webrtc/renegotiate"] = "webrtc/renegotiate"
-
-
-@dataclass(frozen=True, kw_only=True)
 class SessionGetCommand(Model):
     """
     `session/get`: one session's state.
@@ -374,62 +279,6 @@ class SessionAdoptCommand(Model):
     The session.
     """
     type: Literal["session/adopt"] = "session/adopt"
-
-
-@dataclass(frozen=True, kw_only=True)
-class BackchannelReleaseCommand(Model):
-    """
-    `backchannel/release`: frees the camera's backchannel from its
-    talker, or only from the session given.
-    """
-
-    id: int
-    """
-    The command id.
-    """
-    stream_id: str
-    """
-    The stream whose camera's backchannel to free.
-    """
-    type: Literal["backchannel/release"] = "backchannel/release"
-    session_id: str | None = None
-    """
-    Free it only if this session holds it when the worker handles the
-    release, checked atomically against a claim, so a viewer that
-    stops talking never frees the backchannel another session claimed
-    in the meantime; a release that finds another talker, or none,
-    changes nothing. Absent, it is freed from whichever session holds
-    it.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class ControlClient(Model):
-    """
-    One client certificate the control TLS listener lets in.
-    """
-
-    connected: bool
-    """
-    A control connection authenticated with this pin is open.
-    """
-    fixed: bool
-    """
-    The pin comes from the configuration (`--control-clients`), which
-    `clients/remove` cannot change; otherwise it was enrolled by pairing.
-    """
-    pin: str
-    """
-    The SHA-256 of the client's certificate, as lowercase hex pairs
-    joined by colons.
-    """
-
-
-type DeclineReason = Literal["unsupported", "busy", "refused"]
-"""
-Why an offer's talk-back was declined: the `reason` of a
-`backchannel_declined` warning.
-"""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -503,7 +352,6 @@ type ErrorCode = Literal[
     "scheme_unsupported",
     "source_in_use",
     "shutting_down",
-    "not_permitted",
     "internal_error",
     "source_unreachable",
     "source_auth_failed",
@@ -515,7 +363,7 @@ type ErrorCode = Literal[
     "turn_unsupported",
     "h264_profile_mismatch",
     "frame_over_browser_limit",
-    "backchannel_unsupported",
+    "backchannel_busy",
     "av_sync_lost",
     "peer_closed",
     "session_closed",
@@ -663,24 +511,6 @@ sends it.
 """
 
 
-@dataclass(frozen=True, kw_only=True)
-class PairingCreateResult(Model):
-    """
-    What `pairing/create` answers.
-    """
-
-    code: str
-    """
-    The code to paste into the client, `LOTSE1-<server pin>-<secret>`:
-    the SHA-256 of the daemon's certificate and a 128-bit secret, each
-    as lowercase hex. A secret: show it to the user, never log it.
-    """
-    expires_in_ms: int
-    """
-    How long the code stays valid, in milliseconds.
-    """
-
-
 type PongTag = Annotated[Literal["pong"], "pong"]
 """
 `"pong"`.
@@ -731,44 +561,39 @@ class SandboxInfo(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SessionBackchannel(Model):
+class Session(Model):
     """
-    A session's talk-back, as `session/get` reports it.
-    The counters are the worker's, pushed once per second, so they may lag
-    by that much; `negotiated`, `codec` and `talker` are current. They add
-    up over the session's life and never go back: a re-offer that drops
-    talk-back keeps them, and one that adds it again counts on.
+    A session as `session/get` and `session/list` return it.
     """
 
-    bytes_sent: int = 0
+    answered: bool
     """
-    Payload bytes handed to the camera's backchannel, after the reverse
-    transcode.
+    The answer was sent.
     """
-    codec: str | None = None
+    dtls: str
     """
-    The talk-back codec the answer named first on that m-line, which the
-    browser sends (`opus`, `pcmu`, `pcma`); null when not negotiated.
+    The DTLS state, as the browser names it.
     """
-    negotiated: bool = False
+    ice: str
     """
-    The answer accepted the browser's talk-back m-line (`recvonly`, or
-    `sendrecv` on its downlink audio m-line).
+    The ICE state, as the browser names it.
     """
-    packets_dropped_busy: int = 0
+    orphaned: bool
     """
-    Of those, the ones dropped because the session did not hold the
-    backchannel: its offer was declined, or it was released since.
+    No control connection owns it; it closes when the grace expires
+    unless a `session/adopt` takes it back.
     """
-    packets_received: int = 0
+    session_id: str
     """
-    Talk-back RTP packets the session received and took.
+    The session.
     """
-    talker: bool = False
+    since: str
     """
-    The session holds the camera's backchannel now: its offer claimed
-    it, and it keeps it until it closes, re-offers without talk-back
-    or `backchannel/release`.
+    When the offer arrived, RFC 3339 UTC.
+    """
+    stream_id: str
+    """
+    The stream it views.
     """
 
 
@@ -840,12 +665,7 @@ class SessionEventState(Model):
 class SessionEventWarning(Model):
     """
     Non-fatal (`audio_codec_unsupported`, `turn_unsupported`,
-    `h264_profile_mismatch`, `backchannel_declined`, ...). Each code
-    comes at most once per session, but `backchannel_declined`, which
-    comes once per offer (`webrtc/offer` or `webrtc/renegotiate`) that
-    asked for talk-back the session did not get: the talk-back m-line
-    was answered `inactive` (or `sendonly` when it carries the
-    stream's audio too, RFC 3264 §6.1), and `reason` says why.
+    `h264_profile_mismatch`, ...).
     """
 
     code: str
@@ -857,47 +677,21 @@ class SessionEventWarning(Model):
     For humans.
     """
     type: Literal["warning"] = "warning"
-    reason: DeclineReason | None = None
-    """
-    Why, for `backchannel_declined`; absent for every other code.
-    """
-    status: int | None = None
-    """
-    The camera's status code for `refused`, when it gave one
-    (an RTSP status, 453 Not Enough Bandwidth or 503 Service
-    Unavailable when a camera's one backchannel is taken by
-    another client); absent otherwise.
-    """
 
 
 @dataclass(frozen=True, kw_only=True)
 class SessionEventClosed(Model):
     """
-    The last event; the subscription ends with it. A session still
-    waiting for its answer has no deadline of its own: it waits while
-    its source connects, and closes with the source's error as soon as
-    the attempt fails, at once when the offer reaches a source that has
-    already failed. A live source that drops is retried, at once or
-    after a delay, and the session waits for the retry; only a retry
-    that fails closes it. While a `stream/put` switches the stream to
-    another source, the old source's failures do not count. An answered
-    session rides every reconnect instead. A talk-back request the
-    stream cannot serve never closes a session: its answer declines
-    it (`backchannel_declined`).
+    The last event; the subscription ends with it.
     """
 
     code: str
     """
-    The stable code (`peer_closed`, `session_closed`, ...). Before
-    the answer, a failed source closes the session with its error's
-    code, the one `stream/get` reports as `last_error`:
-    `source_unreachable`, `source_auth_failed`, `source_timeout`,
-    `source_protocol_error`, `source_ended` or `worker_crashed`.
+    The stable code (`peer_closed`, `session_closed`, ...).
     """
     message: str
     """
-    For humans; for a source's error, its text as `last_error`
-    carries it, never the source's credentials.
+    For humans.
     """
     type: Literal["closed"] = "closed"
 
@@ -917,29 +711,22 @@ Each variant's schema title names the Python client's class for it.
 """
 
 
+@dataclass(frozen=True, kw_only=True)
+class SessionList(Model):
+    """
+    `session/list`'s result.
+    """
+
+    sessions: list[Session]
+    """
+    Every session on every connection, by id.
+    """
+
+
 type ShutdownTag = Annotated[Literal["shutdown"], "shutdown"]
 """
 `"shutdown"`.
 """
-
-
-@dataclass(frozen=True, kw_only=True)
-class SourceBackchannel(Model):
-    """
-    A source's backchannel as `stream/get` reports it: the camera's reverse
-    audio path (an RTSP camera's ONVIF backchannel, ONVIF Streaming
-    Specification §5.3), one per connection.
-    """
-
-    codec: str
-    """
-    The codec the camera takes (`pcmu`, `pcma`, `opus`); a viewer's
-    talk-back in another codec is transcoded to it.
-    """
-    state: BackchannelState
-    """
-    Whether a session holds it.
-    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -957,25 +744,6 @@ class SourceSpec(Model):
     """
     Per-scheme options, typed by the scheme's factory; unknown fields
     there are rejected too.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class StreamBackchannel(Model):
-    """
-    The talker of a stream's backchannel, as `stream/get` reports it.
-    A camera has one backchannel, held by its source connection, so streams
-    that share the connection report the same talker.
-    """
-
-    since: str | None = None
-    """
-    When `talker` last changed, RFC 3339; null while no offer has
-    claimed it since the connection's worker started.
-    """
-    talker: str | None = None
-    """
-    The session holding the backchannel, or null when it is free.
     """
 
 
@@ -1098,30 +866,6 @@ class SuccessForAnyValue(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SuccessForBackchannelReleaseResult(Model):
-    """
-    A successful `result`: exactly one per command.
-    """
-
-    id: int
-    """
-    The command's id.
-    """
-    result: BackchannelReleaseResult
-    """
-    The command's result.
-    """
-    success: bool
-    """
-    Always `true` here.
-    """
-    type: ResultTag
-    """
-    `"result"`.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
 class SuccessForEmpty(Model):
     """
     A successful `result`: exactly one per command.
@@ -1146,7 +890,7 @@ class SuccessForEmpty(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SuccessForPairingCreateResult(Model):
+class SuccessForSession(Model):
     """
     A successful `result`: exactly one per command.
     """
@@ -1155,7 +899,31 @@ class SuccessForPairingCreateResult(Model):
     """
     The command's id.
     """
-    result: PairingCreateResult
+    result: Session
+    """
+    The command's result.
+    """
+    success: bool
+    """
+    Always `true` here.
+    """
+    type: ResultTag
+    """
+    `"result"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SuccessForSessionList(Model):
+    """
+    A successful `result`: exactly one per command.
+    """
+
+    id: int
+    """
+    The command's id.
+    """
+    result: SessionList
     """
     The command's result.
     """
@@ -1228,14 +996,6 @@ class SupervisorMetrics(Model):
     """
 
 
-type TalkerReason = Literal[
-    "claimed", "session_closed", "released", "renegotiated", "refused", "opted_out"
-]
-"""
-Why a stream's talker changed: the `reason` of `talker_changed`.
-"""
-
-
 @dataclass(frozen=True, kw_only=True)
 class TrackInfo(Model):
     """
@@ -1277,18 +1037,6 @@ class TrackInfo(Model):
     derived_from: str | None = None
     """
     The native track a derived track came from.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class WebrtcRenegotiateResult(Model):
-    """
-    `webrtc/renegotiate`'s result.
-    """
-
-    sdp: str
-    """
-    The SDP answer to the re-offer.
     """
 
 
@@ -1389,18 +1137,6 @@ class ApiError(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ClientList(Model):
-    """
-    `clients/list`'s result.
-    """
-
-    clients: list[ControlClient]
-    """
-    Every allowed pin, ordered by pin.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
 class StreamPutCommand(Model):
     """
     `stream/put`: the idempotent upsert of a stream's desired state.
@@ -1473,9 +1209,6 @@ type Command = (
     | InfoCommand
     | MetricsGetCommand
     | SchemaCommand
-    | PairingCreateCommand
-    | ClientsListCommand
-    | ClientsRemoveCommand
     | StreamPutCommand
     | StreamGetCommand
     | StreamListCommand
@@ -1484,12 +1217,10 @@ type Command = (
     | UnsubscribeCommand
     | WebrtcOfferCommand
     | WebrtcCandidateCommand
-    | WebrtcRenegotiateCommand
     | SessionGetCommand
     | SessionListCommand
     | SessionCloseCommand
     | SessionAdoptCommand
-    | BackchannelReleaseCommand
 )
 """
 Every command, tagged by `type`. Each variant's schema title names the
@@ -1674,70 +1405,6 @@ class Pong(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Session(Model):
-    """
-    A session as `session/get` and `session/list` return it.
-    """
-
-    answered: bool
-    """
-    The answer was sent.
-    """
-    dtls: str
-    """
-    The DTLS state, as the browser names it.
-    """
-    ice: str
-    """
-    The ICE state, as the browser names it.
-    """
-    orphaned: bool
-    """
-    No control connection owns it; it closes when the grace expires
-    unless a `session/adopt` takes it back.
-    """
-    session_id: str
-    """
-    The session.
-    """
-    since: str
-    """
-    When the offer arrived, RFC 3339 UTC.
-    """
-    stream_id: str
-    """
-    The stream it views.
-    """
-    backchannel: SessionBackchannel = field(
-        default_factory=lambda: SessionBackchannel(
-            bytes_sent=0,
-            codec=None,
-            negotiated=False,
-            packets_dropped_busy=0,
-            packets_received=0,
-            talker=False,
-        )
-    )
-    """
-    Talk-back towards the camera's backchannel; `false` and null when
-    the last answer did not negotiate it, and the counters zero until
-    one of the session's answers does.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class SessionList(Model):
-    """
-    `session/list`'s result.
-    """
-
-    sessions: list[Session]
-    """
-    Every session on every connection, by id.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
 class Shutdown(Model):
     """
     Sent once when the daemon shuts down gracefully, before the close.
@@ -1773,22 +1440,7 @@ class SourceInfo(Model):
     """
     url: str
     """
-    The URL redacted to its origin, `scheme://[****@]host[:port]`, then
-    `/****` when the path is anything but empty or `/` and `?****` when
-    a query is present: the path and query can carry secrets (a camera
-    key, a session token) as the userinfo can.
-    """
-    backchannel: SourceBackchannel | None = None
-    """
-    The camera's backchannel, as the connection's probe found it, while
-    the connection is live: what a microphone button is gated on. The
-    probe asks the camera on a connection of its own each time the
-    connection connects; nothing is opened until a talker claims it.
-    Null when the probe found none (the camera has none, refused the
-    question or could not be asked), when no stream on the connection
-    opted in (an RTSP source's `backchannel` option, off by default,
-    which turns the probe on and off without restarting the
-    connection), and while the connection is not live.
+    The URL, credentials redacted.
     """
     details: dict[str, Any] | None = None
     """
@@ -1834,12 +1486,6 @@ class Stream(Model):
     """
     The tracks.
     """
-    backchannel: StreamBackchannel = field(
-        default_factory=lambda: StreamBackchannel(since=None, talker=None)
-    )
-    """
-    Who talks to the camera through its backchannel.
-    """
     last_error: LastError | None = None
     """
     The last error, if the stream is not live.
@@ -1867,43 +1513,7 @@ class StreamEventStream(Model):
     """
 
 
-@dataclass(frozen=True, kw_only=True)
-class StreamEventTalkerChanged(Model):
-    """
-    The talker of the stream's backchannel changed. Sent to the
-    subscribers of every stream on the source connection, never
-    coalesced or shed: a client too slow to take one is disconnected
-    (close code 1008) and reads the talker again from `stream/get`. A
-    burst of changes faster than the daemon passes them on may reach
-    the subscribers as fewer, the last one naming the talker there is
-    then.
-    """
-
-    reason: TalkerReason
-    """
-    Why.
-    """
-    session_id: str
-    """
-    The session it concerns: the new talker, or the one that let go.
-    """
-    since: str
-    """
-    When, RFC 3339: the `since` of `stream/get`'s `backchannel`.
-    """
-    stream_id: str
-    """
-    The stream.
-    """
-    type: Literal["talker_changed"] = "talker_changed"
-    talker: str | None = None
-    """
-    The session holding the backchannel now: `session_id` after a
-    claim, null otherwise.
-    """
-
-
-type StreamEvent = StreamEventStream | StreamEventStreamRemoved | StreamEventTalkerChanged
+type StreamEvent = StreamEventStream | StreamEventStreamRemoved
 """
 An event of `stream/subscribe`.
 Each variant's schema title names the Python client's class for it.
@@ -1919,30 +1529,6 @@ class StreamList(Model):
     streams: dict[str, Stream]
     """
     Every stream by id.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class SuccessForClientList(Model):
-    """
-    A successful `result`: exactly one per command.
-    """
-
-    id: int
-    """
-    The command's id.
-    """
-    result: ClientList
-    """
-    The command's result.
-    """
-    success: bool
-    """
-    Always `true` here.
-    """
-    type: ResultTag
-    """
-    `"result"`.
     """
 
 
@@ -1995,54 +1581,6 @@ class SuccessForMetrics(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SuccessForSession(Model):
-    """
-    A successful `result`: exactly one per command.
-    """
-
-    id: int
-    """
-    The command's id.
-    """
-    result: Session
-    """
-    The command's result.
-    """
-    success: bool
-    """
-    Always `true` here.
-    """
-    type: ResultTag
-    """
-    `"result"`.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class SuccessForSessionList(Model):
-    """
-    A successful `result`: exactly one per command.
-    """
-
-    id: int
-    """
-    The command's id.
-    """
-    result: SessionList
-    """
-    The command's result.
-    """
-    success: bool
-    """
-    Always `true` here.
-    """
-    type: ResultTag
-    """
-    `"result"`.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
 class SuccessForStream(Model):
     """
     A successful `result`: exactly one per command.
@@ -2077,30 +1615,6 @@ class SuccessForStreamList(Model):
     The command's id.
     """
     result: StreamList
-    """
-    The command's result.
-    """
-    success: bool
-    """
-    Always `true` here.
-    """
-    type: ResultTag
-    """
-    `"result"`.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class SuccessForWebrtcRenegotiateResult(Model):
-    """
-    A successful `result`: exactly one per command.
-    """
-
-    id: int
-    """
-    The command's id.
-    """
-    result: WebrtcRenegotiateResult
     """
     The command's result.
     """

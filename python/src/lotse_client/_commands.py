@@ -20,19 +20,12 @@ from mashumaro.codecs.basic import BasicDecoder
 
 from lotse_client.models import (
     AudioMode,
-    BackchannelReleaseCommand,
-    BackchannelReleaseResult,
-    ClientList,
-    ClientsListCommand,
-    ClientsRemoveCommand,
     IceServer,
     InfoCommand,
     InfoResult,
     Metrics,
     MetricsGetCommand,
     Orientation,
-    PairingCreateCommand,
-    PairingCreateResult,
     PingCommand,
     SchemaCommand,
     Session,
@@ -55,8 +48,6 @@ from lotse_client.models import (
     UnsubscribeCommand,
     WebrtcCandidateCommand,
     WebrtcOfferCommand,
-    WebrtcRenegotiateCommand,
-    WebrtcRenegotiateResult,
 )
 
 if TYPE_CHECKING:
@@ -96,53 +87,6 @@ class MetricsCommands:
         """`metrics/get`: process, worker and stream counters."""
         command = MetricsGetCommand(id=NEW)
         return Metrics.from_dict(await self._request(command))
-
-
-class PairingCommands:
-    """The `pairing/...` commands, as `client.pairing.<verb>(...)`."""
-
-    def __init__(self, request: Request, subscribe: Subscribe) -> None:
-        """Bind the transport's two primitives."""
-        self._request = request
-        self._subscribe = subscribe
-
-    async def create(self) -> PairingCreateResult:
-        """`pairing/create`: a one-time pairing code for the control TLS listener.
-
-        Replacing any open one; only on the Unix socket.
-        """
-        command = PairingCreateCommand(id=NEW)
-        return PairingCreateResult.from_dict(await self._request(command))
-
-
-class ClientsCommands:
-    """The `clients/...` commands, as `client.clients.<verb>(...)`."""
-
-    def __init__(self, request: Request, subscribe: Subscribe) -> None:
-        """Bind the transport's two primitives."""
-        self._request = request
-        self._subscribe = subscribe
-
-    async def list(self) -> ClientList:
-        """`clients/list`: every client the control TLS listener lets in.
-
-        Fixed by the configuration or enrolled by pairing.
-        """
-        command = ClientsListCommand(id=NEW)
-        return ClientList.from_dict(await self._request(command))
-
-    async def remove(self, *, pin: str) -> None:
-        """`clients/remove`: removes an enrolled client and closes its control connections.
-
-        Idempotent. Over the TLS listener a client may remove only itself; a fixed pin
-        cannot be removed.
-
-        Args:
-            pin: The client certificate's SHA-256, 64 hex digits, optionally with a colon
-                between each pair.
-        """
-        command = ClientsRemoveCommand(id=NEW, pin=pin)
-        await self._request(command)
 
 
 class StreamCommands:
@@ -279,18 +223,6 @@ class WebrtcCommands:
         )
         await self._request(command)
 
-    async def renegotiate(self, *, sdp: str, session_id: str) -> WebrtcRenegotiateResult:
-        """`webrtc/renegotiate`: a re-offer for an answered session.
-
-        Taken only from the connection that owns it; the result carries the answer.
-
-        Args:
-            sdp: The browser's SDP re-offer.
-            session_id: The session.
-        """
-        command = WebrtcRenegotiateCommand(id=NEW, sdp=sdp, session_id=session_id)
-        return WebrtcRenegotiateResult.from_dict(await self._request(command))
-
 
 class SessionCommands:
     """The `session/...` commands, as `client.session.<verb>(...)`."""
@@ -333,33 +265,6 @@ class SessionCommands:
         return await self._subscribe(command, SESSION_EVENTS)
 
 
-class BackchannelCommands:
-    """The `backchannel/...` commands, as `client.backchannel.<verb>(...)`."""
-
-    def __init__(self, request: Request, subscribe: Subscribe) -> None:
-        """Bind the transport's two primitives."""
-        self._request = request
-        self._subscribe = subscribe
-
-    async def release(
-        self, *, stream_id: str, session_id: str | None = None
-    ) -> BackchannelReleaseResult:
-        """`backchannel/release`: frees the camera's backchannel from its talker.
-
-        Or only from the session given.
-
-        Args:
-            stream_id: The stream whose camera's backchannel to free.
-            session_id: Free it only if this session holds it when the worker handles the
-                release, checked atomically against a claim, so a viewer that stops talking
-                never frees the backchannel another session claimed in the meantime; a
-                release that finds another talker, or none, changes nothing. Absent, it is
-                freed from whichever session holds it.
-        """
-        command = BackchannelReleaseCommand(id=NEW, stream_id=stream_id, session_id=session_id)
-        return BackchannelReleaseResult.from_dict(await self._request(command))
-
-
 class Commands(ABC):
     """Every command as a typed method or a namespace of them.
 
@@ -370,18 +275,12 @@ class Commands(ABC):
         """Bind every namespace to this transport."""
         self.metrics = MetricsCommands(self._request, self._subscribe)
         """`metrics/get`."""
-        self.pairing = PairingCommands(self._request, self._subscribe)
-        """`pairing/create`."""
-        self.clients = ClientsCommands(self._request, self._subscribe)
-        """`clients/list`, `clients/remove`."""
         self.stream = StreamCommands(self._request, self._subscribe)
         """`stream/put`, `stream/get`, `stream/list`, `stream/delete`, `stream/subscribe`."""
         self.webrtc = WebrtcCommands(self._request, self._subscribe)
-        """`webrtc/offer`, `webrtc/candidate`, `webrtc/renegotiate`."""
+        """`webrtc/offer`, `webrtc/candidate`."""
         self.session = SessionCommands(self._request, self._subscribe)
         """`session/get`, `session/list`, `session/close`, `session/adopt`."""
-        self.backchannel = BackchannelCommands(self._request, self._subscribe)
-        """`backchannel/release`."""
 
     @abstractmethod
     async def _request(self, command: Model) -> dict[str, Any]:
