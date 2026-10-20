@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "37 5 * * 1" # weekly: the zizmor job, for what changes without our code changing
 
 permissions:
   contents: read
@@ -20,6 +22,7 @@ jobs:
   # with LOTSE_BIN set, against a daemon built from the lotse commit in schema/lotse-commit.
   check:
     name: every prek hook
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,3 +48,31 @@ jobs:
       - run: mise run check
         env:
           LOTSE_BIN: ${{ github.workspace }}/.lotse/target/debug/lotse
+
+  # The workflows' security audit with zizmor's online audits, which the prek hook leaves out (an
+  # advisory against a pinned action, a pin no tag or branch of its repository holds, a ref both a
+  # tag and a branch): on main and weekly, so a finding that appears without our code changing
+  # fails no unrelated PR. The findings go to code scanning, under the zizmor category, and fail no
+  # run: an alert stays open there until a commit fixes it.
+  zizmor:
+    name: zizmor
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # uploading the findings to code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          install_args: zizmor
+      - name: Audit the workflows
+        env:
+          GH_TOKEN: ${{ github.token }} # the online audits read the actions' repositories
+        run: zizmor --persona=pedantic --strict-collection --no-exit-codes --no-progress --format=sarif . > zizmor.sarif
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
