@@ -4,7 +4,7 @@
 
 from typing import Annotated, Any, Literal
 from lotse_client._base import Model
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 type LotseControlAPI = Any
@@ -13,6 +13,30 @@ type LotseControlAPI = Any
 type AudioMode = Literal["auto", "off"]
 """
 `stream/put`'s `audio`.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class BackchannelReleaseResult(Model):
+    """
+    `backchannel/release`'s result.
+    """
+
+    talker: str | None = None
+    """
+    The session that held the backchannel when the command arrived, as
+    the worker last reported it; null when it was free. A
+    `talker_changed` with `released` follows on `stream/subscribe` when
+    one was released. A release conditional on a `session_id` reports
+    the talker the same way, whichever session it is: the worker frees
+    the backchannel only if that session still holds it when the
+    release arrives, so the `talker_changed` is what tells.
+    """
+
+
+type BackchannelState = Literal["available", "in_use"]
+"""
+Whether a session holds a source's backchannel.
 """
 
 
@@ -30,16 +54,125 @@ class BuildInfo(Model):
     """
     The target triple.
     """
-    git_sha: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipAudio(Model):
     """
-    The git commit, when known.
+    A clip's audio, as `started` reports it.
     """
+
+    codec: str
+    """
+    The codec name in the clip (`aac_lc`, `opus`): G.711 and G.722
+    audio is transcoded to `opus`.
+    """
+
+
+type ClipGapReason = Literal["reconnect", "frames_dropped", "overflow", "lagged"]
+"""
+Why a clip has a hole: the `reason` of `gap`.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipStartResult(Model):
+    """
+    `clip/start`'s result: the clip, and where its bytes are fetched.
+    """
+
+    clip_id: str
+    """
+    The clip: the client's id, or a generated ULID.
+    """
+    url: str
+    """
+    The path to `GET` its bytes from on the socket this command came
+    over: `/v0/clips/{clip_id}`. One request takes them; a clip not
+    fetched in time stops with `not_fetched`.
+    """
+
+
+type ClipStopReason = Literal[
+    "completed",
+    "stopped",
+    "max_duration",
+    "stream_deleted",
+    "stream_changed",
+    "no_video_track",
+    "worker_crashed",
+    "source_not_live",
+    "client_gone",
+    "not_fetched",
+    "session_closed",
+    "shutting_down",
+    "internal_error",
+]
+"""
+Why a clip ended: the `reason` of `stopped`.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipVideo(Model):
+    """
+    A clip's video, as `started` reports it.
+    """
+
+    codec: str
+    """
+    The codec name (`h264`, `h265`).
+    """
+    height: int | None = None
+    """
+    The picture's height in pixels, present with `width`.
+    """
+    width: int | None = None
+    """
+    The picture's width in pixels, cropping applied (ISO/IEC 14496-10
+    §7.4.2.1.1, ITU-T H.265 §7.4.3.2.1); absent when the sequence
+    parameter set does not give it.
+    """
+
+
+type ClipWarningCode = Annotated[Literal["audio_omitted"], "audio_omitted"]
+"""
+The code of a clip's `warning`: every code a clip may warn with, and
+nothing else.
+"""
+
+
+type CloseCode = Literal[
+    "peer_closed",
+    "session_closed",
+    "stream_deleted",
+    "stream_changed",
+    "worker_crashed",
+    "source_unreachable",
+    "source_auth_failed",
+    "source_timeout",
+    "source_protocol_error",
+    "source_ended",
+    "source_not_live",
+    "ice_failed",
+    "invalid_sdp",
+    "no_video_track",
+    "video_codec_unsupported",
+    "shutting_down",
+    "internal_error",
+]
+"""
+The code of a `closed` event: every reason a session may end, and
+nothing else. The `source_*` codes and `worker_crashed` are also the
+codes of `stream/get`'s `last_error`.
+"""
 
 
 @dataclass(frozen=True, kw_only=True)
 class Codecs(Model):
     """
-    The codecs the daemon can carry.
+    The codecs a stream can have for a viewer to play it, natively or
+    through a transcoder.
     """
 
     audio: list[str]
@@ -102,6 +235,54 @@ class SchemaCommand(Model):
     The command id.
     """
     type: Literal["schema"] = "schema"
+
+
+@dataclass(frozen=True, kw_only=True)
+class PairingCreateCommand(Model):
+    """
+    `pairing/create`: a one-time pairing code for the control TLS
+    listener, replacing any open one; only on the Unix socket.
+    """
+
+    id: int
+    """
+    The command id.
+    """
+    type: Literal["pairing/create"] = "pairing/create"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClientsListCommand(Model):
+    """
+    `clients/list`: every client the control TLS listener lets in, fixed
+    by the configuration or enrolled by pairing.
+    """
+
+    id: int
+    """
+    The command id.
+    """
+    type: Literal["clients/list"] = "clients/list"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClientsRemoveCommand(Model):
+    """
+    `clients/remove`: removes an enrolled client and closes its control
+    connections; idempotent. Over the TLS listener a client may remove
+    only itself; a fixed pin cannot be removed.
+    """
+
+    id: int
+    """
+    The command id.
+    """
+    pin: str
+    """
+    The client certificate's SHA-256, 64 hex digits, optionally with a
+    colon between each pair.
+    """
+    type: Literal["clients/remove"] = "clients/remove"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -218,6 +399,29 @@ class WebrtcCandidateCommand(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
+class WebrtcRenegotiateCommand(Model):
+    """
+    `webrtc/renegotiate`: a re-offer for an answered session, taken
+    only from the connection that owns it; the result carries the
+    answer.
+    """
+
+    id: int
+    """
+    The command id.
+    """
+    sdp: str
+    """
+    The browser's SDP re-offer.
+    """
+    session_id: str
+    """
+    The session.
+    """
+    type: Literal["webrtc/renegotiate"] = "webrtc/renegotiate"
+
+
+@dataclass(frozen=True, kw_only=True)
 class SessionGetCommand(Model):
     """
     `session/get`: one session's state.
@@ -282,6 +486,122 @@ class SessionAdoptCommand(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
+class BackchannelReleaseCommand(Model):
+    """
+    `backchannel/release`: frees the camera's backchannel from its
+    talker, or only from the session given.
+    """
+
+    id: int
+    """
+    The command id.
+    """
+    stream_id: str
+    """
+    The stream whose camera's backchannel to free.
+    """
+    type: Literal["backchannel/release"] = "backchannel/release"
+    session_id: str | None = None
+    """
+    Free it only if this session holds it when the worker handles the
+    release, checked atomically against a claim, so a viewer that
+    stops talking never frees the backchannel another session claimed
+    in the meantime; a release that finds another talker, or none,
+    changes nothing. Absent, it is freed from whichever session holds
+    it.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipStartCommand(Model):
+    """
+    `clip/start`: records an event clip of a stream; its bytes are
+    fetched with `GET /v0/clips/{clip_id}`.
+    """
+
+    id: int
+    """
+    The command id, which becomes the subscription id.
+    """
+    stream_id: str
+    """
+    The stream to record.
+    """
+    type: Literal["clip/start"] = "clip/start"
+    after_ms: int | None = None
+    """
+    How long the clip runs after now, in milliseconds, 1 to
+    `limits.clip_max_ms`; absent, it runs until `clip/stop`, at most
+    `limits.clip_max_ms`.
+    """
+    audio: bool = True
+    """
+    Take the stream's audio into the clip: AAC-LC and Opus as they are,
+    G.711 (PCMU, PCMA) and G.722 transcoded to Opus; any other codec is
+    left out with an `audio_omitted` warning. `false` makes a
+    video-only clip.
+    """
+    before_ms: int = 0
+    """
+    How far before now the clip should start, in milliseconds, up to
+    `limits.preroll_max_ms`; what the window holds bounds what it gets
+    (`started.before_ms`).
+    """
+    clip_id: str | None = None
+    """
+    The client's clip id, `^[A-Za-z0-9._-]{1,128}$` but `.` and `..`,
+    which would be dot segments of the result's `url` (RFC 3986 §3.3),
+    unique among the open clips; a ULID when absent.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipStopCommand(Model):
+    """
+    `clip/stop`: ends a clip cleanly; idempotent.
+    """
+
+    clip_id: str
+    """
+    The clip.
+    """
+    id: int
+    """
+    The command id.
+    """
+    type: Literal["clip/stop"] = "clip/stop"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ControlClient(Model):
+    """
+    One client certificate the control TLS listener lets in.
+    """
+
+    connected: bool
+    """
+    A control connection authenticated with this pin is open.
+    """
+    fixed: bool
+    """
+    The pin comes from the configuration (`--control-clients`), which
+    `clients/remove` cannot change; otherwise it was enrolled by pairing.
+    """
+    pin: str
+    """
+    The SHA-256 of the client's certificate, as lowercase hex pairs
+    joined by colons.
+    """
+
+
+type DeclineReason = Literal["unsupported", "busy", "refused"]
+"""
+Why an offer's talk-back was declined: the `reason` of a
+`backchannel_declined` warning.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
 class DemuxMetrics(Model):
     """
     The supervisor's demux counters: what the receive thread did with each
@@ -291,6 +611,13 @@ class DemuxMetrics(Model):
     addresses_learned: int
     """
     Addresses learned through verified STUN requests.
+    """
+    addresses_moved: int
+    """
+    Learned addresses moved to another session by a verified STUN
+    request naming it: away from the session that held one at most
+    once per address per 30 s, and back to it within that time; each
+    also counts as learned.
     """
     forwarded: int
     """
@@ -352,6 +679,7 @@ type ErrorCode = Literal[
     "scheme_unsupported",
     "source_in_use",
     "shutting_down",
+    "not_permitted",
     "internal_error",
     "source_unreachable",
     "source_auth_failed",
@@ -359,25 +687,16 @@ type ErrorCode = Literal[
     "source_protocol_error",
     "source_ended",
     "worker_crashed",
-    "audio_codec_unsupported",
-    "turn_unsupported",
-    "h264_profile_mismatch",
-    "frame_over_browser_limit",
-    "backchannel_busy",
-    "av_sync_lost",
-    "peer_closed",
-    "session_closed",
-    "stream_deleted",
-    "stream_changed",
-    "ice_failed",
+    "backchannel_unsupported",
     "invalid_sdp",
     "no_video_track",
-    "video_codec_unsupported",
-    "snapshot_timeout",
-    "snapshot_busy",
+    "clip_not_found",
+    "clip_id_in_use",
+    "clip_already_fetched",
 ]
 """
-Every stable error code. `code` is the contract; `message` may change.
+Every stable error code of a result or a `last_error`. `code` is the
+contract; `message` may change.
 """
 
 
@@ -488,6 +807,29 @@ class Limits(Model):
     """
     How long an orphaned session outlives its connection.
     """
+    clip_max_ms: int = 0
+    """
+    The longest clip, in milliseconds: the most `after_ms` may ask, and
+    where an open-ended clip ends (`max_duration`).
+    """
+    clips_per_stream: int = 0
+    """
+    Clips open at once on one stream.
+    """
+    max_clips: int = 0
+    """
+    Clips open at once on all streams; 0 when the daemon records none.
+    """
+    preroll_bytes: int = 0
+    """
+    The memory one track's pre-roll ring may hold, in bytes.
+    """
+    preroll_max_ms: int = 0
+    """
+    The longest pre-roll window `stream/put` may ask for
+    (`preroll_ms`), and so the furthest back a clip can start; 0 when
+    the daemon keeps none.
+    """
 
 
 type Orientation = Literal[
@@ -509,6 +851,24 @@ whose browser offered the video orientation extension carries it to
 the browser, which turns the picture; others get it as the camera
 sends it.
 """
+
+
+@dataclass(frozen=True, kw_only=True)
+class PairingCreateResult(Model):
+    """
+    What `pairing/create` answers.
+    """
+
+    code: str
+    """
+    The code to paste into the client, `LOTSE1-<server pin>-<secret>`:
+    the SHA-256 of the daemon's certificate and a 128-bit secret, each
+    as lowercase hex. A secret: show it to the user, never log it.
+    """
+    expires_in_ms: int
+    """
+    How long the code stays valid, in milliseconds.
+    """
 
 
 type PongTag = Annotated[Literal["pong"], "pong"]
@@ -561,39 +921,44 @@ class SandboxInfo(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Session(Model):
+class SessionBackchannel(Model):
     """
-    A session as `session/get` and `session/list` return it.
+    A session's talk-back, as `session/get` reports it.
+    The counters are the worker's, pushed once per second, so they may lag
+    by that much; `negotiated`, `codec` and `talker` are current. They add
+    up over the session's life and never go back: a re-offer that drops
+    talk-back keeps them, and one that adds it again counts on.
     """
 
-    answered: bool
+    bytes_sent: int = 0
     """
-    The answer was sent.
+    Payload bytes handed to the camera's backchannel, after the reverse
+    transcode.
     """
-    dtls: str
+    codec: str | None = None
     """
-    The DTLS state, as the browser names it.
+    The talk-back codec the answer named first on that m-line, which the
+    browser sends (`opus`, `pcmu`, `pcma`); null when not negotiated.
     """
-    ice: str
+    negotiated: bool = False
     """
-    The ICE state, as the browser names it.
+    The answer accepted the browser's talk-back m-line (`recvonly`, or
+    `sendrecv` on its downlink audio m-line).
     """
-    orphaned: bool
+    packets_dropped_busy: int = 0
     """
-    No control connection owns it; it closes when the grace expires
-    unless a `session/adopt` takes it back.
+    Of those, the ones dropped because the session did not hold the
+    backchannel: its offer was declined, or it was released since.
     """
-    session_id: str
+    packets_received: int = 0
     """
-    The session.
+    Talk-back RTP packets the session received and took.
     """
-    since: str
+    talker: bool = False
     """
-    When the offer arrived, RFC 3339 UTC.
-    """
-    stream_id: str
-    """
-    The stream it views.
+    The session holds the camera's backchannel now: its offer claimed
+    it, and it keeps it until it closes, re-offers without talk-back
+    or `backchannel/release`.
     """
 
 
@@ -662,71 +1027,60 @@ class SessionEventState(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SessionEventWarning(Model):
-    """
-    Non-fatal (`audio_codec_unsupported`, `turn_unsupported`,
-    `h264_profile_mismatch`, ...).
-    """
-
-    code: str
-    """
-    The stable code.
-    """
-    message: str
-    """
-    For humans.
-    """
-    type: Literal["warning"] = "warning"
-
-
-@dataclass(frozen=True, kw_only=True)
 class SessionEventClosed(Model):
     """
-    The last event; the subscription ends with it.
+    The last event; the subscription ends with it. A session still
+    waiting for its answer has no deadline of its own: it waits while
+    its source connects, and closes with the source's error as soon as
+    the attempt fails, at once when the offer reaches a source that has
+    already failed. A live source that drops is retried, at once or
+    after a delay, and the session waits for the retry; only a retry
+    that fails closes it. While a `stream/put` switches the stream to
+    another source, the old source's failures do not count. An answered
+    session rides every reconnect instead. A talk-back request the
+    stream cannot serve never closes a session: its answer declines
+    it (`backchannel_declined`).
     """
 
-    code: str
+    code: CloseCode
     """
-    The stable code (`peer_closed`, `session_closed`, ...).
+    The stable code. Before the answer, a failed source closes the
+    session with its error's code, the one `stream/get` reports as
+    `last_error`: `source_unreachable`, `source_auth_failed`,
+    `source_timeout`, `source_protocol_error`, `source_ended` or
+    `worker_crashed`.
     """
     message: str
     """
-    For humans.
+    For humans; for a source's error, its text as `last_error`
+    carries it, never the source's credentials.
     """
     type: Literal["closed"] = "closed"
-
-
-type SessionEvent = (
-    SessionEventSession
-    | SessionEventAnswer
-    | SessionEventCandidate
-    | SessionEventState
-    | SessionEventWarning
-    | SessionEventClosed
-)
-"""
-An event of `webrtc/offer` and `session/adopt`, in the order 04 lists
-them; `closed` is always the last.
-Each variant's schema title names the Python client's class for it.
-"""
-
-
-@dataclass(frozen=True, kw_only=True)
-class SessionList(Model):
-    """
-    `session/list`'s result.
-    """
-
-    sessions: list[Session]
-    """
-    Every session on every connection, by id.
-    """
 
 
 type ShutdownTag = Annotated[Literal["shutdown"], "shutdown"]
 """
 `"shutdown"`.
 """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceBackchannel(Model):
+    """
+    A source's backchannel as `stream/get` reports it: the camera's reverse
+    audio path (an RTSP camera's ONVIF backchannel, ONVIF Streaming
+    Specification §5.3), one per connection.
+    """
+
+    codec: str
+    """
+    The codec the camera takes (`pcmu`, `pcma`, `opus`); a viewer's
+    talk-back in another codec is transcoded to it.
+    """
+    state: BackchannelState
+    """
+    Whether a session holds it.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -744,6 +1098,25 @@ class SourceSpec(Model):
     """
     Per-scheme options, typed by the scheme's factory; unknown fields
     there are rejected too.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class StreamBackchannel(Model):
+    """
+    The talker of a stream's backchannel, as `stream/get` reports it.
+    A camera has one backchannel, held by its source connection, so streams
+    that share the connection report the same talker.
+    """
+
+    since: str | None = None
+    """
+    When `talker` last changed, RFC 3339; null while no offer has
+    claimed it since the connection's worker started.
+    """
+    talker: str | None = None
+    """
+    The session holding the backchannel, or null when it is free.
     """
 
 
@@ -786,14 +1159,29 @@ class StreamStats(Model):
     A stream's counters.
     """
 
-    age_skips: int = 0
-    """
-    Live packets skipped for age.
-    """
     av_sync_lost: int = 0
     """
     Times the skew watchdog withdrew the stream's audio for sync; at
     most 1, since it stays withdrawn while the source runs.
+    """
+    clip_bytes: int = 0
+    """
+    The length of the stream's clip files, as their workers report
+    them (`stopped`'s `bytes`): a last tail a body did not take in time
+    is counted, though it never reached the body.
+    """
+    clip_gaps: int = 0
+    """
+    Gaps in the stream's clips.
+    """
+    clips_completed: int = 0
+    """
+    Clips that ended with their whole file written: `completed`,
+    `stopped` or `max_duration`.
+    """
+    clips_started: int = 0
+    """
+    Clips started on the stream.
     """
     datagrams_rejected: int = 0
     """
@@ -812,18 +1200,6 @@ class StreamStats(Model):
     every session sends them whole, and those viewers may freeze until
     a keyframe that fits.
     """
-    ingest_late_skips: int = 0
-    """
-    Frames skipped as late after an ingest stall.
-    """
-    keyframe_requests: int = 0
-    """
-    Upstream keyframe requests.
-    """
-    lag_events: int = 0
-    """
-    Fan-out lag events.
-    """
     packets_lost: int = 0
     """
     RTP packets from the camera that never arrived, by their sequence
@@ -834,10 +1210,6 @@ class StreamStats(Model):
     """
     RTP packets from the camera dropped because they came again or
     after a later one (RTSP over UDP): duplicates and reordering.
-    """
-    stalls: int = 0
-    """
-    Stall watchdog hits.
     """
 
 
@@ -852,6 +1224,54 @@ class SuccessForAnyValue(Model):
     The command's id.
     """
     result: Any
+    """
+    The command's result.
+    """
+    success: bool
+    """
+    Always `true` here.
+    """
+    type: ResultTag
+    """
+    `"result"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SuccessForBackchannelReleaseResult(Model):
+    """
+    A successful `result`: exactly one per command.
+    """
+
+    id: int
+    """
+    The command's id.
+    """
+    result: BackchannelReleaseResult
+    """
+    The command's result.
+    """
+    success: bool
+    """
+    Always `true` here.
+    """
+    type: ResultTag
+    """
+    `"result"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SuccessForClipStartResult(Model):
+    """
+    A successful `result`: exactly one per command.
+    """
+
+    id: int
+    """
+    The command's id.
+    """
+    result: ClipStartResult
     """
     The command's result.
     """
@@ -890,7 +1310,7 @@ class SuccessForEmpty(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SuccessForSession(Model):
+class SuccessForPairingCreateResult(Model):
     """
     A successful `result`: exactly one per command.
     """
@@ -899,31 +1319,7 @@ class SuccessForSession(Model):
     """
     The command's id.
     """
-    result: Session
-    """
-    The command's result.
-    """
-    success: bool
-    """
-    Always `true` here.
-    """
-    type: ResultTag
-    """
-    `"result"`.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class SuccessForSessionList(Model):
-    """
-    A successful `result`: exactly one per command.
-    """
-
-    id: int
-    """
-    The command's id.
-    """
-    result: SessionList
+    result: PairingCreateResult
     """
     The command's result.
     """
@@ -996,47 +1392,65 @@ class SupervisorMetrics(Model):
     """
 
 
+type TalkerReason = Literal[
+    "claimed", "session_closed", "released", "renegotiated", "refused", "opted_out"
+]
+"""
+Why a stream's talker changed: the `reason` of `talker_changed`.
+"""
+
+
 @dataclass(frozen=True, kw_only=True)
-class TrackInfo(Model):
+class TrackPreroll(Model):
     """
-    A track as `stream/get` reports it.
+    A track's pre-roll ring, as `stream/get` reports it: whole GOPs of the
+    newest media, kept for clips while the stream has a window.
     """
 
     bytes: int
     """
-    Bytes seen.
+    The memory the ring holds: its frames' payloads plus a fixed cost
+    per frame, at most `limits.preroll_bytes`. The open GOP is also in
+    the track's GOP cache, so the two overlap; the frames are shared,
+    not copied.
     """
-    codec: str
+    held_ms: int
     """
-    The codec name (`h264`, `aac_lc`).
+    The window it holds, in milliseconds: from its oldest keyframe to
+    its newest frame; shorter than `preroll_ms` while it fills, after
+    a reconnect, or when `limits.preroll_bytes` caps it.
     """
-    frames: int
+    truncations: int
     """
-    Frames seen.
+    GOPs larger than `limits.preroll_bytes` the ring could keep only
+    the start of.
     """
-    id: str
+
+
+type WarningCode = Literal[
+    "audio_codec_unsupported",
+    "turn_unsupported",
+    "av_sync_lost",
+    "h264_profile_mismatch",
+    "invalid_candidate",
+    "frame_over_browser_limit",
+    "backchannel_declined",
+]
+"""
+The code of a `warning` event: every code a session may warn with,
+and nothing else.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class WebrtcRenegotiateResult(Model):
     """
-    `v0`, `a0`, `a1`.
+    `webrtc/renegotiate`'s result.
     """
-    kind: str
+
+    sdp: str
     """
-    `video` or `audio`.
-    """
-    sync: str
-    """
-    How the track is timed now: `arrival` until the camera's first
-    Sender Report for it, `sender_reports` from then on, `arrival` again
-    on a new timeline until the next report; at most a second old. A
-    derived track's is its source's.
-    """
-    audio_delay_ms: int | None = None
-    """
-    The delay a derived track's transcoder adds, in milliseconds; absent
-    on native tracks.
-    """
-    derived_from: str | None = None
-    """
-    The native track a derived track came from.
+    The SDP answer to the re-offer.
     """
 
 
@@ -1118,8 +1532,7 @@ class WorkerMetrics(Model):
 @dataclass(frozen=True, kw_only=True)
 class ApiError(Model):
     """
-    An error as the API carries it, in results, `closed` events and
-    `last_error`.
+    An error as the API carries it, in results and `last_error`.
     """
 
     code: ErrorCode
@@ -1134,6 +1547,133 @@ class ApiError(Model):
     """
     Structured detail, per code.
     """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClientList(Model):
+    """
+    `clients/list`'s result.
+    """
+
+    clients: list[ControlClient]
+    """
+    Every allowed pin, ordered by pin.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipEventStarted(Model):
+    """
+    The clip's file is under way: its first bytes are on their way to
+    the body.
+    """
+
+    at: str
+    """
+    When it started, RFC 3339 UTC: the daemon's time of the start,
+    which `before_ms` counts back from.
+    """
+    before_ms: int
+    """
+    How far before `at` the clip begins, in milliseconds: the age
+    of the keyframe it starts at, which is what the pre-roll window
+    held, not what was asked; 0 without a window.
+    """
+    clip_id: str
+    """
+    The clip.
+    """
+    type: Literal["started"] = "started"
+    video: ClipVideo
+    """
+    Its video.
+    """
+    audio: ClipAudio | None = None
+    """
+    Its audio; null for a clip without audio (`audio: false`, a
+    stream without audio, or `audio_omitted`).
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipEventWarning(Model):
+    """
+    Non-fatal: the clip goes on.
+    """
+
+    code: ClipWarningCode
+    """
+    The stable code.
+    """
+    message: str
+    """
+    For humans.
+    """
+    type: Literal["warning"] = "warning"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipEventGap(Model):
+    """
+    The clip has a hole: no media between `from_ms` and `to_ms`, so
+    the file's timeline has a hole of that length.
+    """
+
+    from_ms: int
+    """
+    Where the hole begins, in milliseconds of the clip's media time
+    (from its first frame), as the file counts it.
+    """
+    reason: ClipGapReason
+    """
+    Why.
+    """
+    to_ms: int
+    """
+    Where it ends, likewise.
+    """
+    type: Literal["gap"] = "gap"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClipEventStopped(Model):
+    """
+    The last event; the subscription ends with it, and the body ends
+    once the bytes before it are read.
+    """
+
+    bytes: int
+    """
+    The file's length, as its worker made it: the bytes written for
+    the body, and a last tail the body did not take in time, which it
+    then ends without, cut; 0 when the clip ended without its worker's
+    last word (`worker_crashed`, `stream_deleted`, `stream_changed` by
+    a move to another connection, `shutting_down`, `internal_error`
+    for a malformed report), whose body is then cut.
+    """
+    duration_ms: int
+    """
+    The media time the file covers, in milliseconds; 0 for the
+    same ends.
+    """
+    gaps: int
+    """
+    The gaps the clip had, every one counted even where not each
+    was reported as an event.
+    """
+    reason: ClipStopReason
+    """
+    Why.
+    """
+    type: Literal["stopped"] = "stopped"
+
+
+type ClipEvent = ClipEventStarted | ClipEventWarning | ClipEventGap | ClipEventStopped
+"""
+An event of `clip/start`, in the order they come: `started` unless
+the clip ends first, then warnings and gaps, and `stopped` always last.
+Each variant's schema title names the Python client's class for it.
+"""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1172,6 +1712,16 @@ class StreamPutCommand(Model):
     frame from the warm GOP cache. Changing only this never reconnects;
     turning it off with no viewers starts the linger.
     """
+    preroll_ms: int = 0
+    """
+    Keep the last `preroll_ms` milliseconds of the stream's media in
+    memory, so a `clip/start` can begin before it was asked for; 0, the
+    default, keeps none. At most `limits.preroll_max_ms`, and each track
+    holds at most `limits.preroll_bytes` of whole GOPs, so the window
+    held may be shorter (`stream/get` reports it). Not a reason to
+    connect: the window fills only while `preload` or a viewer keeps
+    the source connected. Changing only this never reconnects.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1209,6 +1759,9 @@ type Command = (
     | InfoCommand
     | MetricsGetCommand
     | SchemaCommand
+    | PairingCreateCommand
+    | ClientsListCommand
+    | ClientsRemoveCommand
     | StreamPutCommand
     | StreamGetCommand
     | StreamListCommand
@@ -1217,10 +1770,14 @@ type Command = (
     | UnsubscribeCommand
     | WebrtcOfferCommand
     | WebrtcCandidateCommand
+    | WebrtcRenegotiateCommand
     | SessionGetCommand
     | SessionListCommand
     | SessionCloseCommand
     | SessionAdoptCommand
+    | BackchannelReleaseCommand
+    | ClipStartCommand
+    | ClipStopCommand
 )
 """
 Every command, tagged by `type`. Each variant's schema title names the
@@ -1248,12 +1805,12 @@ class ConnectionInfo(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EventFrameForSessionEvent(Model):
+class EventFrameForClipEvent(Model):
     """
     An `event` of a subscription; `id` is the subscribing command's.
     """
 
-    event: SessionEvent
+    event: ClipEvent
     """
     The event.
     """
@@ -1405,6 +1962,117 @@ class Pong(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
+class Session(Model):
+    """
+    A session as `session/get` and `session/list` return it.
+    """
+
+    answered: bool
+    """
+    The answer was sent.
+    """
+    dtls: str
+    """
+    The DTLS state, as the browser names it.
+    """
+    ice: str
+    """
+    The ICE state, as the browser names it.
+    """
+    orphaned: bool
+    """
+    No control connection owns it; it closes when the grace expires
+    unless a `session/adopt` takes it back.
+    """
+    session_id: str
+    """
+    The session.
+    """
+    since: str
+    """
+    When the offer arrived, RFC 3339 UTC.
+    """
+    stream_id: str
+    """
+    The stream it views.
+    """
+    backchannel: SessionBackchannel = field(
+        default_factory=lambda: SessionBackchannel(
+            bytes_sent=0,
+            codec=None,
+            negotiated=False,
+            packets_dropped_busy=0,
+            packets_received=0,
+            talker=False,
+        )
+    )
+    """
+    Talk-back towards the camera's backchannel; `false` and null when
+    the last answer did not negotiate it, and the counters zero until
+    one of the session's answers does.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SessionEventWarning(Model):
+    """
+    Non-fatal. Each code comes at most once per session, but `backchannel_declined`, which
+    comes once per offer (`webrtc/offer` or `webrtc/renegotiate`) that
+    asked for talk-back the session did not get: the talk-back m-line
+    was answered `inactive` (or `sendonly` when it carries the
+    stream's audio too, RFC 3264 §6.1), and `reason` says why.
+    """
+
+    code: WarningCode
+    """
+    The stable code.
+    """
+    message: str
+    """
+    For humans.
+    """
+    type: Literal["warning"] = "warning"
+    reason: DeclineReason | None = None
+    """
+    Why, for `backchannel_declined`; absent for every other code.
+    """
+    status: int | None = None
+    """
+    The camera's status code for `refused`, when it gave one
+    (an RTSP status, 453 Not Enough Bandwidth or 503 Service
+    Unavailable when a camera's one backchannel is taken by
+    another client); absent otherwise.
+    """
+
+
+type SessionEvent = (
+    SessionEventSession
+    | SessionEventAnswer
+    | SessionEventCandidate
+    | SessionEventState
+    | SessionEventWarning
+    | SessionEventClosed
+)
+"""
+An event of `webrtc/offer` and `session/adopt`, in the order 04 lists
+them; `closed` is always the last.
+Each variant's schema title names the Python client's class for it.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class SessionList(Model):
+    """
+    `session/list`'s result.
+    """
+
+    sessions: list[Session]
+    """
+    Every session on every connection, by id.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
 class Shutdown(Model):
     """
     Sent once when the daemon shuts down gracefully, before the close.
@@ -1440,55 +2108,22 @@ class SourceInfo(Model):
     """
     url: str
     """
-    The URL, credentials redacted.
+    The URL redacted to its origin, `scheme://[****@]host[:port]`, then
+    `/****` when the path is anything but empty or `/` and `?****` when
+    a query is present: the path and query can carry secrets (a camera
+    key, a session token) as the userinfo can.
     """
-    details: dict[str, Any] | None = None
+    backchannel: SourceBackchannel | None = None
     """
-    Protocol-specific detail, documented by the scheme's options schema.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class Stream(Model):
-    """
-    A stream, as `stream/get` returns it and `stream/list` lists it.
-    """
-
-    preload: bool
-    """
-    Whether the stream stays connected without viewers.
-    """
-    sessions: list[str]
-    """
-    Open session ids.
-    """
-    since: str
-    """
-    When the current state began, RFC 3339.
-    """
-    sources: list[SourceInfo]
-    """
-    The sources, in order.
-    """
-    state: StreamState
-    """
-    The connection's state.
-    """
-    stats: StreamStats
-    """
-    The counters.
-    """
-    stream_id: str
-    """
-    The id.
-    """
-    tracks: list[TrackInfo]
-    """
-    The tracks.
-    """
-    last_error: LastError | None = None
-    """
-    The last error, if the stream is not live.
+    The camera's backchannel, as the connection's probe found it, while
+    the connection is live: what a microphone button is gated on. The
+    probe asks the camera on a connection of its own each time the
+    connection connects; nothing is opened until a talker claims it.
+    Null when the probe found none (the camera has none, refused the
+    question or could not be asked), when no stream on the connection
+    opted in (an RTSP source's `backchannel` option, off by default,
+    which turns the probe on and off without restarting the
+    connection), and while the connection is not live.
     """
 
 
@@ -1513,7 +2148,43 @@ class StreamEventStream(Model):
     """
 
 
-type StreamEvent = StreamEventStream | StreamEventStreamRemoved
+@dataclass(frozen=True, kw_only=True)
+class StreamEventTalkerChanged(Model):
+    """
+    The talker of the stream's backchannel changed. Sent to the
+    subscribers of every stream on the source connection, never
+    coalesced or shed: a client too slow to take one is disconnected
+    (close code 1008) and reads the talker again from `stream/get`. A
+    burst of changes faster than the daemon passes them on may reach
+    the subscribers as fewer, the last one naming the talker there is
+    then.
+    """
+
+    reason: TalkerReason
+    """
+    Why.
+    """
+    session_id: str
+    """
+    The session it concerns: the new talker, or the one that let go.
+    """
+    since: str
+    """
+    When, RFC 3339: the `since` of `stream/get`'s `backchannel`.
+    """
+    stream_id: str
+    """
+    The stream.
+    """
+    type: Literal["talker_changed"] = "talker_changed"
+    talker: str | None = None
+    """
+    The session holding the backchannel now: `session_id` after a
+    claim, null otherwise.
+    """
+
+
+type StreamEvent = StreamEventStream | StreamEventStreamRemoved | StreamEventTalkerChanged
 """
 An event of `stream/subscribe`.
 Each variant's schema title names the Python client's class for it.
@@ -1521,14 +2192,26 @@ Each variant's schema title names the Python client's class for it.
 
 
 @dataclass(frozen=True, kw_only=True)
-class StreamList(Model):
+class SuccessForClientList(Model):
     """
-    `stream/list`'s result.
+    A successful `result`: exactly one per command.
     """
 
-    streams: dict[str, Stream]
+    id: int
     """
-    Every stream by id.
+    The command's id.
+    """
+    result: ClientList
+    """
+    The command's result.
+    """
+    success: bool
+    """
+    Always `true` here.
+    """
+    type: ResultTag
+    """
+    `"result"`.
     """
 
 
@@ -1581,6 +2264,270 @@ class SuccessForMetrics(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SuccessForSession(Model):
+    """
+    A successful `result`: exactly one per command.
+    """
+
+    id: int
+    """
+    The command's id.
+    """
+    result: Session
+    """
+    The command's result.
+    """
+    success: bool
+    """
+    Always `true` here.
+    """
+    type: ResultTag
+    """
+    `"result"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SuccessForSessionList(Model):
+    """
+    A successful `result`: exactly one per command.
+    """
+
+    id: int
+    """
+    The command's id.
+    """
+    result: SessionList
+    """
+    The command's result.
+    """
+    success: bool
+    """
+    Always `true` here.
+    """
+    type: ResultTag
+    """
+    `"result"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SuccessForWebrtcRenegotiateResult(Model):
+    """
+    A successful `result`: exactly one per command.
+    """
+
+    id: int
+    """
+    The command's id.
+    """
+    result: WebrtcRenegotiateResult
+    """
+    The command's result.
+    """
+    success: bool
+    """
+    Always `true` here.
+    """
+    type: ResultTag
+    """
+    `"result"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class TrackInfo(Model):
+    """
+    A track as `stream/get` reports it.
+    """
+
+    bytes: int
+    """
+    Bytes seen.
+    """
+    codec: str
+    """
+    The codec name (`h264`, `aac_lc`).
+    """
+    frames: int
+    """
+    Frames seen.
+    """
+    id: str
+    """
+    `v0`, `a0`, `a1`.
+    """
+    kind: str
+    """
+    `video` or `audio`.
+    """
+    sync: str
+    """
+    How the track is timed now: `arrival` until the camera's first
+    Sender Report for it, `sender_reports` from then on, `arrival` again
+    on a new timeline until the next report; at most a second old. A
+    derived track's is its source's.
+    """
+    audio_delay_ms: int | None = None
+    """
+    The delay a derived track's transcoder adds, in milliseconds; absent
+    on native tracks.
+    """
+    channels: int | None = None
+    """
+    An audio track's channel count: 1 for G.711 and G.722 (RFC 3551
+    §4.5), the stream's own for Opus and AAC. Absent where
+    `sample_rate` is.
+    """
+    derived_from: str | None = None
+    """
+    The native track a derived track came from.
+    """
+    height: int | None = None
+    """
+    A video track's picture height in pixels, present with `width`.
+    """
+    preroll: TrackPreroll | None = None
+    """
+    What the track's pre-roll ring holds for clips; null without a
+    window (`stream/put`'s `preroll_ms` 0). The worker's figures,
+    pushed once per second.
+    """
+    profile_level_id: str | None = None
+    """
+    An H.264 track's `profile-level-id` (RFC 6184 §8.1): its sequence
+    parameter set's `profile_idc`, constraint flags and `level_idc` as
+    six lowercase hex digits, as an SDP `fmtp` spells them (`42e01f`).
+    Absent on other codecs, and until the camera sent its SPS.
+    """
+    sample_rate: int | None = None
+    """
+    An audio track's sampling rate in Hz, which is not always its RTP
+    clock rate: G.722 samples at 16000 on an 8000 clock (RFC 3551
+    §4.5.2), Opus is decoded at 48000 (RFC 7587 §4.1), AAC at its
+    `AudioSpecificConfig`'s rate (ISO/IEC 14496-3 §1.6.2.1). Absent on
+    video tracks and on codecs the daemon cannot carry.
+    """
+    width: int | None = None
+    """
+    A video track's picture width in pixels, cropping applied (ISO/IEC
+    14496-10 §7.4.2.1.1, ITU-T H.265 §7.4.3.2.1). Absent on audio and
+    MJPEG tracks, and until the camera sent its SPS.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class EventFrameForSessionEvent(Model):
+    """
+    An `event` of a subscription; `id` is the subscribing command's.
+    """
+
+    event: SessionEvent
+    """
+    The event.
+    """
+    id: int
+    """
+    The subscription's command id.
+    """
+    type: EventTag
+    """
+    `"event"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class EventFrameForStreamEvent(Model):
+    """
+    An `event` of a subscription; `id` is the subscribing command's.
+    """
+
+    event: StreamEvent
+    """
+    The event.
+    """
+    id: int
+    """
+    The subscription's command id.
+    """
+    type: EventTag
+    """
+    `"event"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class Stream(Model):
+    """
+    A stream, as `stream/get` returns it and `stream/list` lists it.
+    """
+
+    preload: bool
+    """
+    Whether the stream stays connected without viewers.
+    """
+    sessions: list[str]
+    """
+    Open session ids.
+    """
+    since: str
+    """
+    When the current state began, RFC 3339.
+    """
+    sources: list[SourceInfo]
+    """
+    The sources, in order.
+    """
+    state: StreamState
+    """
+    The connection's state.
+    """
+    stats: StreamStats
+    """
+    The counters.
+    """
+    stream_id: str
+    """
+    The id.
+    """
+    tracks: list[TrackInfo]
+    """
+    The tracks.
+    """
+    backchannel: StreamBackchannel = field(
+        default_factory=lambda: StreamBackchannel(since=None, talker=None)
+    )
+    """
+    Who talks to the camera through its backchannel.
+    """
+    clips: list[str] = field(default_factory=list)
+    """
+    Open clip ids.
+    """
+    last_error: LastError | None = None
+    """
+    The last error, if the stream is not live.
+    """
+    preroll_ms: int = 0
+    """
+    The pre-roll window `stream/put` asked for, in milliseconds; 0
+    without one. What each track holds is its `preroll`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class StreamList(Model):
+    """
+    `stream/list`'s result.
+    """
+
+    streams: dict[str, Stream]
+    """
+    Every stream by id.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
 class SuccessForStream(Model):
     """
     A successful `result`: exactly one per command.
@@ -1625,24 +2572,4 @@ class SuccessForStreamList(Model):
     type: ResultTag
     """
     `"result"`.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
-class EventFrameForStreamEvent(Model):
-    """
-    An `event` of a subscription; `id` is the subscribing command's.
-    """
-
-    event: StreamEvent
-    """
-    The event.
-    """
-    id: int
-    """
-    The subscription's command id.
-    """
-    type: EventTag
-    """
-    `"event"`.
     """

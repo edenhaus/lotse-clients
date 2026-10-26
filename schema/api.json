@@ -1,7 +1,7 @@
 {
   "$defs": {
     "ApiError": {
-      "description": "An error as the API carries it, in results, `closed` events and\n`last_error`.",
+      "description": "An error as the API carries it, in results and `last_error`.",
       "properties": {
         "code": {
           "$ref": "#/$defs/ErrorCode",
@@ -38,16 +38,37 @@
         }
       ]
     },
-    "BuildInfo": {
-      "description": "How the daemon was built.",
+    "BackchannelReleaseResult": {
+      "description": "`backchannel/release`'s result.",
       "properties": {
-        "git_sha": {
-          "description": "The git commit, when known.",
+        "talker": {
+          "description": "The session that held the backchannel when the command arrived, as\nthe worker last reported it; null when it was free. A\n`talker_changed` with `released` follows on `stream/subscribe` when\none was released. A release conditional on a `session_id` reports\nthe talker the same way, whichever session it is: the worker frees\nthe backchannel only if that session still holds it when the\nrelease arrives, so the `talker_changed` is what tells.",
           "type": [
             "string",
             "null"
           ]
+        }
+      },
+      "type": "object"
+    },
+    "BackchannelState": {
+      "description": "Whether a session holds a source's backchannel.",
+      "oneOf": [
+        {
+          "const": "available",
+          "description": "Nobody talks and no camera session of it is open: the next offer\nthat asks for talk-back claims it.",
+          "type": "string"
         },
+        {
+          "const": "in_use",
+          "description": "A session holds it, the stream's `backchannel.talker`: the\ncamera's backchannel session for it is opening or open.",
+          "type": "string"
+        }
+      ]
+    },
+    "BuildInfo": {
+      "description": "How the daemon was built.",
+      "properties": {
         "rustc": {
           "description": "The Rust version.",
           "type": "string"
@@ -63,8 +84,431 @@
       ],
       "type": "object"
     },
+    "ClientList": {
+      "description": "`clients/list`'s result.",
+      "properties": {
+        "clients": {
+          "description": "Every allowed pin, ordered by pin.",
+          "items": {
+            "$ref": "#/$defs/ControlClient"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "clients"
+      ],
+      "type": "object"
+    },
+    "ClipAudio": {
+      "description": "A clip's audio, as `started` reports it.",
+      "properties": {
+        "codec": {
+          "description": "The codec name in the clip (`aac_lc`, `opus`): G.711 and G.722\naudio is transcoded to `opus`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "codec"
+      ],
+      "type": "object"
+    },
+    "ClipEvent": {
+      "description": "An event of `clip/start`, in the order they come: `started` unless\nthe clip ends first, then warnings and gaps, and `stopped` always last.\nEach variant's schema title names the Python client's class for it.",
+      "oneOf": [
+        {
+          "description": "The clip's file is under way: its first bytes are on their way to\nthe body.",
+          "properties": {
+            "at": {
+              "description": "When it started, RFC 3339 UTC: the daemon's time of the start,\nwhich `before_ms` counts back from.",
+              "type": "string"
+            },
+            "audio": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ClipAudio"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Its audio; null for a clip without audio (`audio: false`, a\nstream without audio, or `audio_omitted`)."
+            },
+            "before_ms": {
+              "description": "How far before `at` the clip begins, in milliseconds: the age\nof the keyframe it starts at, which is what the pre-roll window\nheld, not what was asked; 0 without a window.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "clip_id": {
+              "description": "The clip.",
+              "type": "string"
+            },
+            "type": {
+              "const": "started",
+              "type": "string"
+            },
+            "video": {
+              "$ref": "#/$defs/ClipVideo",
+              "description": "Its video."
+            }
+          },
+          "required": [
+            "type",
+            "clip_id",
+            "at",
+            "before_ms",
+            "video"
+          ],
+          "title": "ClipEventStarted",
+          "type": "object"
+        },
+        {
+          "description": "Non-fatal: the clip goes on.",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/ClipWarningCode",
+              "description": "The stable code."
+            },
+            "message": {
+              "description": "For humans.",
+              "type": "string"
+            },
+            "type": {
+              "const": "warning",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "code",
+            "message"
+          ],
+          "title": "ClipEventWarning",
+          "type": "object"
+        },
+        {
+          "description": "The clip has a hole: no media between `from_ms` and `to_ms`, so\nthe file's timeline has a hole of that length.",
+          "properties": {
+            "from_ms": {
+              "description": "Where the hole begins, in milliseconds of the clip's media time\n(from its first frame), as the file counts it.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reason": {
+              "$ref": "#/$defs/ClipGapReason",
+              "description": "Why."
+            },
+            "to_ms": {
+              "description": "Where it ends, likewise.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "gap",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "reason",
+            "from_ms",
+            "to_ms"
+          ],
+          "title": "ClipEventGap",
+          "type": "object"
+        },
+        {
+          "description": "The last event; the subscription ends with it, and the body ends\nonce the bytes before it are read.",
+          "properties": {
+            "bytes": {
+              "description": "The file's length, as its worker made it: the bytes written for\nthe body, and a last tail the body did not take in time, which it\nthen ends without, cut; 0 when the clip ended without its worker's\nlast word (`worker_crashed`, `stream_deleted`, `stream_changed` by\na move to another connection, `shutting_down`, `internal_error`\nfor a malformed report), whose body is then cut.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "duration_ms": {
+              "description": "The media time the file covers, in milliseconds; 0 for the\nsame ends.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "gaps": {
+              "description": "The gaps the clip had, every one counted even where not each\nwas reported as an event.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reason": {
+              "$ref": "#/$defs/ClipStopReason",
+              "description": "Why."
+            },
+            "type": {
+              "const": "stopped",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "reason",
+            "bytes",
+            "duration_ms",
+            "gaps"
+          ],
+          "title": "ClipEventStopped",
+          "type": "object"
+        }
+      ]
+    },
+    "ClipGapReason": {
+      "description": "Why a clip has a hole: the `reason` of `gap`.",
+      "oneOf": [
+        {
+          "const": "reconnect",
+          "description": "The camera's connection dropped and came back, during the clip or\ninside its pre-roll: the hole is the real time between.",
+          "type": "string"
+        },
+        {
+          "const": "frames_dropped",
+          "description": "Video frames are missing inside one connection: two consecutive\nones arrived more than twice the frame interval apart (the camera\nor the network dropped them).",
+          "type": "string"
+        },
+        {
+          "const": "overflow",
+          "description": "The clip's queue ran full, since its body is read slower than the\ncamera sends, and frames were dropped up to the next keyframe; or a\npre-roll GOP larger than the window's byte cap was cut short.",
+          "type": "string"
+        },
+        {
+          "const": "lagged",
+          "description": "The clip fell behind the stream's frames and missed some; it goes\non from the next keyframe.",
+          "type": "string"
+        }
+      ]
+    },
+    "ClipStartResult": {
+      "description": "`clip/start`'s result: the clip, and where its bytes are fetched.",
+      "properties": {
+        "clip_id": {
+          "description": "The clip: the client's id, or a generated ULID.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The path to `GET` its bytes from on the socket this command came\nover: `/v0/clips/{clip_id}`. One request takes them; a clip not\nfetched in time stops with `not_fetched`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "clip_id",
+        "url"
+      ],
+      "type": "object"
+    },
+    "ClipStopReason": {
+      "description": "Why a clip ended: the `reason` of `stopped`.",
+      "oneOf": [
+        {
+          "const": "completed",
+          "description": "`after_ms` reached.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "`clip/stop` or `unsubscribe`.",
+          "type": "string"
+        },
+        {
+          "const": "max_duration",
+          "description": "`limits.clip_max_ms` reached: an open-ended clip's end.",
+          "type": "string"
+        },
+        {
+          "const": "stream_deleted",
+          "description": "The stream was deleted.",
+          "type": "string"
+        },
+        {
+          "const": "stream_changed",
+          "description": "The stream's codec, its parameter sets or picture size changed, or\nits source was switched: a file has one sample entry per track, so\nthe client starts another clip.",
+          "type": "string"
+        },
+        {
+          "const": "no_video_track",
+          "description": "The stream had no video track when its source came up.",
+          "type": "string"
+        },
+        {
+          "const": "worker_crashed",
+          "description": "The connection's worker process died; the body ends without its\nlast chunk.",
+          "type": "string"
+        },
+        {
+          "const": "source_not_live",
+          "description": "The source sent no keyframe to start at in time.",
+          "type": "string"
+        },
+        {
+          "const": "client_gone",
+          "description": "The body's reader went away before the clip ended.",
+          "type": "string"
+        },
+        {
+          "const": "not_fetched",
+          "description": "Nobody fetched the clip's bytes in time.",
+          "type": "string"
+        },
+        {
+          "const": "session_closed",
+          "description": "The control connection that started the clip closed.",
+          "type": "string"
+        },
+        {
+          "const": "shutting_down",
+          "description": "The daemon is shutting down; the last fragment is written if the\nbody takes it in time.",
+          "type": "string"
+        },
+        {
+          "const": "internal_error",
+          "description": "An invariant failed, or a worker reported a reason the API does not\nknow; a bug, always logged with context.",
+          "type": "string"
+        }
+      ]
+    },
+    "ClipVideo": {
+      "description": "A clip's video, as `started` reports it.",
+      "properties": {
+        "codec": {
+          "description": "The codec name (`h264`, `h265`).",
+          "type": "string"
+        },
+        "height": {
+          "description": "The picture's height in pixels, present with `width`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "width": {
+          "description": "The picture's width in pixels, cropping applied (ISO/IEC 14496-10\n§7.4.2.1.1, ITU-T H.265 §7.4.3.2.1); absent when the sequence\nparameter set does not give it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "codec"
+      ],
+      "type": "object"
+    },
+    "ClipWarningCode": {
+      "description": "The code of a clip's `warning`: every code a clip may warn with, and\nnothing else.",
+      "oneOf": [
+        {
+          "const": "audio_omitted",
+          "description": "The stream's audio neither fits the clip's container nor can be\ntranscoded into it; the clip has no audio, and the message names\nthe codec.",
+          "type": "string"
+        }
+      ]
+    },
+    "CloseCode": {
+      "description": "The code of a `closed` event: every reason a session may end, and\nnothing else. The `source_*` codes and `worker_crashed` are also the\ncodes of `stream/get`'s `last_error`.",
+      "oneOf": [
+        {
+          "const": "peer_closed",
+          "description": "The browser closed the peer connection.",
+          "type": "string"
+        },
+        {
+          "const": "session_closed",
+          "description": "`unsubscribe`, `session/close`, or the grace expired.",
+          "type": "string"
+        },
+        {
+          "const": "stream_deleted",
+          "description": "The stream was deleted.",
+          "type": "string"
+        },
+        {
+          "const": "stream_changed",
+          "description": "The codec family changed on reconnect.",
+          "type": "string"
+        },
+        {
+          "const": "worker_crashed",
+          "description": "The connection's worker process died.",
+          "type": "string"
+        },
+        {
+          "const": "source_unreachable",
+          "description": "Connecting to the source failed.",
+          "type": "string"
+        },
+        {
+          "const": "source_auth_failed",
+          "description": "The source rejected the credentials.",
+          "type": "string"
+        },
+        {
+          "const": "source_timeout",
+          "description": "The read deadline or stall watchdog hit.",
+          "type": "string"
+        },
+        {
+          "const": "source_protocol_error",
+          "description": "The source violated its protocol.",
+          "type": "string"
+        },
+        {
+          "const": "source_ended",
+          "description": "The source or publisher closed the stream.",
+          "type": "string"
+        },
+        {
+          "const": "source_not_live",
+          "description": "The offer reached a worker that runs no source.",
+          "type": "string"
+        },
+        {
+          "const": "ice_failed",
+          "description": "ICE failed or stayed disconnected.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_sdp",
+          "description": "The offer could not be parsed, or has neither a video nor an\naudio m-line.",
+          "type": "string"
+        },
+        {
+          "const": "no_video_track",
+          "description": "The offer has a video m-line, and the stream no video track.",
+          "type": "string"
+        },
+        {
+          "const": "video_codec_unsupported",
+          "description": "No video codec both sides can use.",
+          "type": "string"
+        },
+        {
+          "const": "shutting_down",
+          "description": "The daemon is shutting down.",
+          "type": "string"
+        },
+        {
+          "const": "internal_error",
+          "description": "An invariant failed, or a worker reported a code the API does not\nknow; a bug, always logged with context.",
+          "type": "string"
+        }
+      ]
+    },
     "Codecs": {
-      "description": "The codecs the daemon can carry.",
+      "description": "The codecs a stream can have for a viewer to play it, natively or\nthrough a transcoder.",
       "properties": {
         "audio": {
           "description": "Audio codec names.",
@@ -180,6 +624,78 @@
         },
         {
           "additionalProperties": false,
+          "description": "`pairing/create`: a one-time pairing code for the control TLS\nlistener, replacing any open one; only on the Unix socket.",
+          "properties": {
+            "id": {
+              "description": "The command id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "pairing/create",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "title": "PairingCreateCommand",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`clients/list`: every client the control TLS listener lets in, fixed\nby the configuration or enrolled by pairing.",
+          "properties": {
+            "id": {
+              "description": "The command id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "clients/list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "title": "ClientsListCommand",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`clients/remove`: removes an enrolled client and closes its control\nconnections; idempotent. Over the TLS listener a client may remove\nonly itself; a fixed pin cannot be removed.",
+          "properties": {
+            "id": {
+              "description": "The command id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pin": {
+              "description": "The client certificate's SHA-256, 64 hex digits, optionally with a\ncolon between each pair.",
+              "maxLength": 95,
+              "type": "string"
+            },
+            "type": {
+              "const": "clients/remove",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "pin"
+          ],
+          "title": "ClientsRemoveCommand",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "`stream/put`: the idempotent upsert of a stream's desired state.",
           "properties": {
             "audio": {
@@ -202,6 +718,13 @@
               "default": false,
               "description": "Keep the source connected without viewers: connected at put and\nreconnected after failures while set, so the first viewer gets a\nframe from the warm GOP cache. Changing only this never reconnects;\nturning it off with no viewers starts the linger.",
               "type": "boolean"
+            },
+            "preroll_ms": {
+              "default": 0,
+              "description": "Keep the last `preroll_ms` milliseconds of the stream's media in\nmemory, so a `clip/start` can begin before it was asked for; 0, the\ndefault, keeps none. At most `limits.preroll_max_ms`, and each track\nholds at most `limits.preroll_bytes` of whole GOPs, so the window\nheld may be shorter (`stream/get` reports it). Not a reason to\nconnect: the window fills only while `preload` or a viewer keeps\nthe source connected. Changing only this never reconnects.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
             },
             "sources": {
               "description": "The sources, in order; the first that provides a kind wins.",
@@ -474,6 +997,40 @@
         },
         {
           "additionalProperties": false,
+          "description": "`webrtc/renegotiate`: a re-offer for an answered session, taken\nonly from the connection that owns it; the result carries the\nanswer.",
+          "properties": {
+            "id": {
+              "description": "The command id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sdp": {
+              "description": "The browser's SDP re-offer.",
+              "maxLength": 65536,
+              "type": "string"
+            },
+            "session_id": {
+              "description": "The session.",
+              "pattern": "^[A-Za-z0-9._-]{1,128}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "webrtc/renegotiate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "session_id",
+            "sdp"
+          ],
+          "title": "WebrtcRenegotiateCommand",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "`session/get`: one session's state.",
           "properties": {
             "id": {
@@ -577,6 +1134,126 @@
           ],
           "title": "SessionAdoptCommand",
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`backchannel/release`: frees the camera's backchannel from its\ntalker, or only from the session given.",
+          "properties": {
+            "id": {
+              "description": "The command id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session_id": {
+              "description": "Free it only if this session holds it when the worker handles the\nrelease, checked atomically against a claim, so a viewer that\nstops talking never frees the backchannel another session claimed\nin the meantime; a release that finds another talker, or none,\nchanges nothing. Absent, it is freed from whichever session holds\nit.",
+              "pattern": "^[A-Za-z0-9._-]{1,128}$",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "stream_id": {
+              "description": "The stream whose camera's backchannel to free.",
+              "type": "string"
+            },
+            "type": {
+              "const": "backchannel/release",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "stream_id"
+          ],
+          "title": "BackchannelReleaseCommand",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`clip/start`: records an event clip of a stream; its bytes are\nfetched with `GET /v0/clips/{clip_id}`.",
+          "properties": {
+            "after_ms": {
+              "description": "How long the clip runs after now, in milliseconds, 1 to\n`limits.clip_max_ms`; absent, it runs until `clip/stop`, at most\n`limits.clip_max_ms`.",
+              "format": "uint32",
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "audio": {
+              "default": true,
+              "description": "Take the stream's audio into the clip: AAC-LC and Opus as they are,\nG.711 (PCMU, PCMA) and G.722 transcoded to Opus; any other codec is\nleft out with an `audio_omitted` warning. `false` makes a\nvideo-only clip.",
+              "type": "boolean"
+            },
+            "before_ms": {
+              "default": 0,
+              "description": "How far before now the clip should start, in milliseconds, up to\n`limits.preroll_max_ms`; what the window holds bounds what it gets\n(`started.before_ms`).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "clip_id": {
+              "description": "The client's clip id, `^[A-Za-z0-9._-]{1,128}$` but `.` and `..`,\nwhich would be dot segments of the result's `url` (RFC 3986 §3.3),\nunique among the open clips; a ULID when absent.",
+              "pattern": "^(?:[A-Za-z0-9._-]{3,128}|[A-Za-z0-9_-][A-Za-z0-9._-]?|\\.[A-Za-z0-9_-])$",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "The command id, which becomes the subscription id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "stream_id": {
+              "description": "The stream to record.",
+              "pattern": "^[A-Za-z0-9._-]{1,128}$",
+              "type": "string"
+            },
+            "type": {
+              "const": "clip/start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "stream_id"
+          ],
+          "title": "ClipStartCommand",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`clip/stop`: ends a clip cleanly; idempotent.",
+          "properties": {
+            "clip_id": {
+              "description": "The clip.",
+              "pattern": "^(?:[A-Za-z0-9._-]{3,128}|[A-Za-z0-9_-][A-Za-z0-9._-]?|\\.[A-Za-z0-9_-])$",
+              "type": "string"
+            },
+            "id": {
+              "description": "The command id.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "clip/stop",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "clip_id"
+          ],
+          "title": "ClipStopCommand",
+          "type": "object"
         }
       ]
     },
@@ -604,11 +1281,60 @@
       ],
       "type": "object"
     },
+    "ControlClient": {
+      "description": "One client certificate the control TLS listener lets in.",
+      "properties": {
+        "connected": {
+          "description": "A control connection authenticated with this pin is open.",
+          "type": "boolean"
+        },
+        "fixed": {
+          "description": "The pin comes from the configuration (`--control-clients`), which\n`clients/remove` cannot change; otherwise it was enrolled by pairing.",
+          "type": "boolean"
+        },
+        "pin": {
+          "description": "The SHA-256 of the client's certificate, as lowercase hex pairs\njoined by colons.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pin",
+        "fixed",
+        "connected"
+      ],
+      "type": "object"
+    },
+    "DeclineReason": {
+      "description": "Why an offer's talk-back was declined: the `reason` of a\n`backchannel_declined` warning.",
+      "oneOf": [
+        {
+          "const": "unsupported",
+          "description": "The stream has no backchannel the session can feed: its source\nprotocol cannot carry audio back, no stream on its connection opted\nin to it, the camera offers none, or it takes a codec talk-back\ncannot produce from what the offer lists. Or the offer asks for\ntalk-back on its `sendrecv` downlink audio m-line while the\nstream's audio codec cannot reach the camera, so no codec on that\nm-line goes both ways (RFC 3264 §6.1): it is answered `sendonly`,\nand an offer with a `sendonly` m-line for talk-back gets it. The\nmessage says which.",
+          "type": "string"
+        },
+        {
+          "const": "busy",
+          "description": "Another session holds the backchannel; `backchannel/release`, its\nre-offer dropping talk-back, or its close frees it.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The camera refused the backchannel for this session; `status`\ncarries its status code when it gave one.",
+          "type": "string"
+        }
+      ]
+    },
     "DemuxMetrics": {
       "description": "The supervisor's demux counters: what the receive thread did with each\ndatagram on the shared UDP socket.",
       "properties": {
         "addresses_learned": {
           "description": "Addresses learned through verified STUN requests.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "addresses_moved": {
+          "description": "Learned addresses moved to another session by a verified STUN\nrequest naming it: away from the session that held one at most\nonce per address per 30 s, and back to it within that time; each\nalso counts as learned.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -674,6 +1400,7 @@
         "unroutable",
         "stun_rejected",
         "addresses_learned",
+        "addresses_moved",
         "worker_full",
         "responses",
         "relayed",
@@ -687,7 +1414,7 @@
       "type": "object"
     },
     "ErrorCode": {
-      "description": "Every stable error code. `code` is the contract; `message` may change.",
+      "description": "Every stable error code of a result or a `last_error`. `code` is the\ncontract; `message` may change.",
       "oneOf": [
         {
           "const": "invalid_request",
@@ -716,7 +1443,7 @@
         },
         {
           "const": "session_not_found",
-          "description": "No such session, or its grace expired; for `webrtc/candidate`, also\na session this connection does not own.",
+          "description": "No such session, or its grace expired; for `webrtc/candidate` and\n`webrtc/renegotiate`, also a session this connection does not own.",
           "type": "string"
         },
         {
@@ -747,6 +1474,11 @@
         {
           "const": "shutting_down",
           "description": "The command arrived during graceful shutdown.",
+          "type": "string"
+        },
+        {
+          "const": "not_permitted",
+          "description": "The command is not allowed on this connection (`pairing/create`\nover the TLS listener, `clients/remove` of another client over it),\nor not for this target (`clients/remove` of a fixed pin).",
           "type": "string"
         },
         {
@@ -785,86 +1517,61 @@
           "type": "string"
         },
         {
-          "const": "audio_codec_unsupported",
-          "description": "Audio omitted from a session; video continues.",
-          "type": "string"
-        },
-        {
-          "const": "turn_unsupported",
-          "description": "A `turns:` entry was ignored.",
-          "type": "string"
-        },
-        {
-          "const": "h264_profile_mismatch",
-          "description": "The browser did not offer the stream's H.264 profile.",
-          "type": "string"
-        },
-        {
-          "const": "frame_over_browser_limit",
-          "description": "A video frame needed more RTP packets than some libwebrtc receivers\nassemble; it was sent whole.",
-          "type": "string"
-        },
-        {
-          "const": "backchannel_busy",
-          "description": "Another session holds the backchannel.",
-          "type": "string"
-        },
-        {
-          "const": "av_sync_lost",
-          "description": "Audio withdrawn because sync could not be held.",
-          "type": "string"
-        },
-        {
-          "const": "peer_closed",
-          "description": "The browser closed the peer connection.",
-          "type": "string"
-        },
-        {
-          "const": "session_closed",
-          "description": "`unsubscribe`, `session/close`, or the grace expired.",
-          "type": "string"
-        },
-        {
-          "const": "stream_deleted",
-          "description": "The stream was deleted.",
-          "type": "string"
-        },
-        {
-          "const": "stream_changed",
-          "description": "The codec family changed on reconnect.",
-          "type": "string"
-        },
-        {
-          "const": "ice_failed",
-          "description": "ICE failed or stayed disconnected.",
+          "const": "backchannel_unsupported",
+          "description": "`backchannel/release` on a stream whose source protocol cannot\ncarry audio back.",
           "type": "string"
         },
         {
           "const": "invalid_sdp",
-          "description": "The offer could not be parsed.",
+          "description": "The offer could not be parsed, or a re-offer changes the video\nm-line a session keeps, or adds one to a session without video.",
           "type": "string"
         },
         {
           "const": "no_video_track",
-          "description": "The stream has no video track.",
+          "description": "A re-offer has no video m-line, and its session plays video; or\n`clip/start` on a stream without a video track.",
           "type": "string"
         },
         {
-          "const": "video_codec_unsupported",
-          "description": "No video codec both sides can use.",
+          "const": "clip_not_found",
+          "description": "`GET /v0/clips/{clip_id}` (HTTP 404) of a clip that is not open:\nnever started, already ended, or an id that is no clip id.",
           "type": "string"
         },
         {
-          "const": "snapshot_timeout",
-          "description": "No keyframe within the snapshot timeout.",
+          "const": "clip_id_in_use",
+          "description": "`clip/start` with the id of a clip that is still open.",
           "type": "string"
         },
         {
-          "const": "snapshot_busy",
-          "description": "The snapshot decode queue is full.",
+          "const": "clip_already_fetched",
+          "description": "`GET /v0/clips/{clip_id}` (HTTP 409) of a clip whose bytes another\nrequest already took: a clip has one body.",
           "type": "string"
         }
       ]
+    },
+    "EventFrame_for_ClipEvent": {
+      "description": "An `event` of a subscription; `id` is the subscribing command's.",
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/ClipEvent",
+          "description": "The event."
+        },
+        "id": {
+          "description": "The subscription's command id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "$ref": "#/$defs/EventTag",
+          "description": "`\"event\"`."
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "event"
+      ],
+      "type": "object"
     },
     "EventFrame_for_SessionEvent": {
       "description": "An `event` of a subscription; `id` is the subscribing command's.",
@@ -1157,6 +1864,27 @@
     "Limits": {
       "description": "The limits in force.",
       "properties": {
+        "clip_max_ms": {
+          "default": 0,
+          "description": "The longest clip, in milliseconds: the most `after_ms` may ask, and\nwhere an open-ended clip ends (`max_duration`).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "clips_per_stream": {
+          "default": 0,
+          "description": "Clips open at once on one stream.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_clips": {
+          "default": 0,
+          "description": "Clips open at once on all streams; 0 when the daemon records none.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "max_connections": {
           "description": "Control connections.",
           "format": "uint32",
@@ -1177,6 +1905,20 @@
         },
         "max_streams": {
           "description": "Streams.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "preroll_bytes": {
+          "default": 0,
+          "description": "The memory one track's pre-roll ring may hold, in bytes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "preroll_max_ms": {
+          "default": 0,
+          "description": "The longest pre-roll window `stream/put` may ask for\n(`preroll_ms`), and so the furthest back a clip can start; 0 when\nthe daemon keeps none.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1285,6 +2027,27 @@
         }
       ]
     },
+    "PairingCreateResult": {
+      "additionalProperties": false,
+      "description": "What `pairing/create` answers.",
+      "properties": {
+        "code": {
+          "description": "The code to paste into the client, `LOTSE1-<server pin>-<secret>`:\nthe SHA-256 of the daemon's certificate and a 128-bit secret, each\nas lowercase hex. A secret: show it to the user, never log it.",
+          "type": "string"
+        },
+        "expires_in_ms": {
+          "description": "How long the code stays valid, in milliseconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "expires_in_ms"
+      ],
+      "type": "object"
+    },
     "Pong": {
       "description": "The answer to `ping`, sent instead of a `result`.",
       "properties": {
@@ -1381,6 +2144,18 @@
           "description": "The answer was sent.",
           "type": "boolean"
         },
+        "backchannel": {
+          "$ref": "#/$defs/SessionBackchannel",
+          "default": {
+            "bytes_sent": 0,
+            "codec": null,
+            "negotiated": false,
+            "packets_dropped_busy": 0,
+            "packets_received": 0,
+            "talker": false
+          },
+          "description": "Talk-back towards the camera's backchannel; `false` and null when\nthe last answer did not negotiate it, and the counters zero until\none of the session's answers does."
+        },
         "dtls": {
           "description": "The DTLS state, as the browser names it.",
           "type": "string"
@@ -1415,6 +2190,51 @@
         "orphaned",
         "since"
       ],
+      "type": "object"
+    },
+    "SessionBackchannel": {
+      "description": "A session's talk-back, as `session/get` reports it.\nThe counters are the worker's, pushed once per second, so they may lag\nby that much; `negotiated`, `codec` and `talker` are current. They add\nup over the session's life and never go back: a re-offer that drops\ntalk-back keeps them, and one that adds it again counts on.",
+      "properties": {
+        "bytes_sent": {
+          "default": 0,
+          "description": "Payload bytes handed to the camera's backchannel, after the reverse\ntranscode.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "codec": {
+          "default": null,
+          "description": "The talk-back codec the answer named first on that m-line, which the\nbrowser sends (`opus`, `pcmu`, `pcma`); null when not negotiated.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "negotiated": {
+          "default": false,
+          "description": "The answer accepted the browser's talk-back m-line (`recvonly`, or\n`sendrecv` on its downlink audio m-line).",
+          "type": "boolean"
+        },
+        "packets_dropped_busy": {
+          "default": 0,
+          "description": "Of those, the ones dropped because the session did not hold the\nbackchannel: its offer was declined, or it was released since.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "packets_received": {
+          "default": 0,
+          "description": "Talk-back RTP packets the session received and took.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "talker": {
+          "default": false,
+          "description": "The session holds the camera's backchannel now: its offer claimed\nit, and it keeps it until it closes, re-offers without talk-back\nor `backchannel/release`.",
+          "type": "boolean"
+        }
+      },
       "type": "object"
     },
     "SessionEvent": {
@@ -1518,15 +2338,36 @@
           "type": "object"
         },
         {
-          "description": "Non-fatal (`audio_codec_unsupported`, `turn_unsupported`,\n`h264_profile_mismatch`, ...).",
+          "description": "Non-fatal. Each code comes at most once per session, but `backchannel_declined`, which\ncomes once per offer (`webrtc/offer` or `webrtc/renegotiate`) that\nasked for talk-back the session did not get: the talk-back m-line\nwas answered `inactive` (or `sendonly` when it carries the\nstream's audio too, RFC 3264 §6.1), and `reason` says why.",
           "properties": {
             "code": {
-              "description": "The stable code.",
-              "type": "string"
+              "$ref": "#/$defs/WarningCode",
+              "description": "The stable code."
             },
             "message": {
               "description": "For humans.",
               "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeclineReason"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Why, for `backchannel_declined`; absent for every other code."
+            },
+            "status": {
+              "description": "The camera's status code for `refused`, when it gave one\n(an RTSP status, 453 Not Enough Bandwidth or 503 Service\nUnavailable when a camera's one backchannel is taken by\nanother client); absent otherwise.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "type": {
               "const": "warning",
@@ -1542,14 +2383,14 @@
           "type": "object"
         },
         {
-          "description": "The last event; the subscription ends with it.",
+          "description": "The last event; the subscription ends with it. A session still\nwaiting for its answer has no deadline of its own: it waits while\nits source connects, and closes with the source's error as soon as\nthe attempt fails, at once when the offer reaches a source that has\nalready failed. A live source that drops is retried, at once or\nafter a delay, and the session waits for the retry; only a retry\nthat fails closes it. While a `stream/put` switches the stream to\nanother source, the old source's failures do not count. An answered\nsession rides every reconnect instead. A talk-back request the\nstream cannot serve never closes a session: its answer declines\nit (`backchannel_declined`).",
           "properties": {
             "code": {
-              "description": "The stable code (`peer_closed`, `session_closed`, ...).",
-              "type": "string"
+              "$ref": "#/$defs/CloseCode",
+              "description": "The stable code. Before the answer, a failed source closes the\nsession with its error's code, the one `stream/get` reports as\n`last_error`: `source_unreachable`, `source_auth_failed`,\n`source_timeout`, `source_protocol_error`, `source_ended` or\n`worker_crashed`."
             },
             "message": {
-              "description": "For humans.",
+              "description": "For humans; for a source's error, its text as `last_error`\ncarries it, never the source's credentials.",
               "type": "string"
             },
             "type": {
@@ -1606,17 +2447,42 @@
         }
       ]
     },
+    "SourceBackchannel": {
+      "description": "A source's backchannel as `stream/get` reports it: the camera's reverse\naudio path (an RTSP camera's ONVIF backchannel, ONVIF Streaming\nSpecification §5.3), one per connection.",
+      "properties": {
+        "codec": {
+          "description": "The codec the camera takes (`pcmu`, `pcma`, `opus`); a viewer's\ntalk-back in another codec is transcoded to it.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/BackchannelState",
+          "description": "Whether a session holds it."
+        }
+      },
+      "required": [
+        "codec",
+        "state"
+      ],
+      "type": "object"
+    },
     "SourceInfo": {
       "description": "A source as `stream/get` reports it.",
       "properties": {
+        "backchannel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceBackchannel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The camera's backchannel, as the connection's probe found it, while\nthe connection is live: what a microphone button is gated on. The\nprobe asks the camera on a connection of its own each time the\nconnection connects; nothing is opened until a talker claims it.\nNull when the probe found none (the camera has none, refused the\nquestion or could not be asked), when no stream on the connection\nopted in (an RTSP source's `backchannel` option, off by default,\nwhich turns the probe on and off without restarting the\nconnection), and while the connection is not live."
+        },
         "connection": {
           "$ref": "#/$defs/ConnectionInfo",
           "description": "The shared connection."
-        },
-        "details": {
-          "additionalProperties": true,
-          "description": "Protocol-specific detail, documented by the scheme's options schema.",
-          "type": "object"
         },
         "protocol": {
           "description": "The protocol (`rtsp`).",
@@ -1633,7 +2499,7 @@
           "description": "The connection's state."
         },
         "url": {
-          "description": "The URL, credentials redacted.",
+          "description": "The URL redacted to its origin, `scheme://[****@]host[:port]`, then\n`/****` when the path is anything but empty or `/` and `?****` when\na query is present: the path and query can carry secrets (a camera\nkey, a session token) as the userinfo can.",
           "type": "string"
         }
       },
@@ -1669,6 +2535,22 @@
     "Stream": {
       "description": "A stream, as `stream/get` returns it and `stream/list` lists it.",
       "properties": {
+        "backchannel": {
+          "$ref": "#/$defs/StreamBackchannel",
+          "default": {
+            "since": null,
+            "talker": null
+          },
+          "description": "Who talks to the camera through its backchannel."
+        },
+        "clips": {
+          "default": [],
+          "description": "Open clip ids.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "last_error": {
           "anyOf": [
             {
@@ -1683,6 +2565,13 @@
         "preload": {
           "description": "Whether the stream stays connected without viewers.",
           "type": "boolean"
+        },
+        "preroll_ms": {
+          "default": 0,
+          "description": "The pre-roll window `stream/put` asked for, in milliseconds; 0\nwithout one. What each track holds is its `preroll`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "sessions": {
           "description": "Open session ids.",
@@ -1732,6 +2621,28 @@
         "sessions",
         "stats"
       ],
+      "type": "object"
+    },
+    "StreamBackchannel": {
+      "description": "The talker of a stream's backchannel, as `stream/get` reports it.\nA camera has one backchannel, held by its source connection, so streams\nthat share the connection report the same talker.",
+      "properties": {
+        "since": {
+          "default": null,
+          "description": "When `talker` last changed, RFC 3339; null while no offer has\nclaimed it since the connection's worker started.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "talker": {
+          "default": null,
+          "description": "The session holding the backchannel, or null when it is free.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "StreamEvent": {
@@ -1789,6 +2700,47 @@
             "stream_id"
           ],
           "title": "StreamEventStreamRemoved",
+          "type": "object"
+        },
+        {
+          "description": "The talker of the stream's backchannel changed. Sent to the\nsubscribers of every stream on the source connection, never\ncoalesced or shed: a client too slow to take one is disconnected\n(close code 1008) and reads the talker again from `stream/get`. A\nburst of changes faster than the daemon passes them on may reach\nthe subscribers as fewer, the last one naming the talker there is\nthen.",
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/TalkerReason",
+              "description": "Why."
+            },
+            "session_id": {
+              "description": "The session it concerns: the new talker, or the one that let go.",
+              "type": "string"
+            },
+            "since": {
+              "description": "When, RFC 3339: the `since` of `stream/get`'s `backchannel`.",
+              "type": "string"
+            },
+            "stream_id": {
+              "description": "The stream.",
+              "type": "string"
+            },
+            "talker": {
+              "description": "The session holding the backchannel now: `session_id` after a\nclaim, null otherwise.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "talker_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "stream_id",
+            "session_id",
+            "reason",
+            "since"
+          ],
+          "title": "StreamEventTalkerChanged",
           "type": "object"
         }
       ]
@@ -1865,16 +2817,37 @@
     "StreamStats": {
       "description": "A stream's counters.",
       "properties": {
-        "age_skips": {
+        "av_sync_lost": {
           "default": 0,
-          "description": "Live packets skipped for age.",
+          "description": "Times the skew watchdog withdrew the stream's audio for sync; at\nmost 1, since it stays withdrawn while the source runs.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
-        "av_sync_lost": {
+        "clip_bytes": {
           "default": 0,
-          "description": "Times the skew watchdog withdrew the stream's audio for sync; at\nmost 1, since it stays withdrawn while the source runs.",
+          "description": "The length of the stream's clip files, as their workers report\nthem (`stopped`'s `bytes`): a last tail a body did not take in time\nis counted, though it never reached the body.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "clip_gaps": {
+          "default": 0,
+          "description": "Gaps in the stream's clips.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "clips_completed": {
+          "default": 0,
+          "description": "Clips that ended with their whole file written: `completed`,\n`stopped` or `max_duration`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "clips_started": {
+          "default": 0,
+          "description": "Clips started on the stream.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1900,27 +2873,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "ingest_late_skips": {
-          "default": 0,
-          "description": "Frames skipped as late after an ingest stall.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "keyframe_requests": {
-          "default": 0,
-          "description": "Upstream keyframe requests.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "lag_events": {
-          "default": 0,
-          "description": "Fan-out lag events.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
         "packets_lost": {
           "default": 0,
           "description": "RTP packets from the camera that never arrived, by their sequence\nnumbers: loss on the network (RTSP over UDP) or packets the camera\ndropped itself.",
@@ -1931,13 +2883,6 @@
         "packets_out_of_order": {
           "default": 0,
           "description": "RTP packets from the camera dropped because they came again or\nafter a later one (RTSP over UDP): duplicates and reordering.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "stalls": {
-          "default": 0,
-          "description": "Stall watchdog hits.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1955,6 +2900,96 @@
           "type": "integer"
         },
         "result": {
+          "description": "The command's result."
+        },
+        "success": {
+          "description": "Always `true` here.",
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/ResultTag",
+          "description": "`\"result\"`."
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "success",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Success_for_BackchannelReleaseResult": {
+      "description": "A successful `result`: exactly one per command.",
+      "properties": {
+        "id": {
+          "description": "The command's id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "$ref": "#/$defs/BackchannelReleaseResult",
+          "description": "The command's result."
+        },
+        "success": {
+          "description": "Always `true` here.",
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/ResultTag",
+          "description": "`\"result\"`."
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "success",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Success_for_ClientList": {
+      "description": "A successful `result`: exactly one per command.",
+      "properties": {
+        "id": {
+          "description": "The command's id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "$ref": "#/$defs/ClientList",
+          "description": "The command's result."
+        },
+        "success": {
+          "description": "Always `true` here.",
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/ResultTag",
+          "description": "`\"result\"`."
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "success",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Success_for_ClipStartResult": {
+      "description": "A successful `result`: exactly one per command.",
+      "properties": {
+        "id": {
+          "description": "The command's id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "$ref": "#/$defs/ClipStartResult",
           "description": "The command's result."
         },
         "success": {
@@ -2045,6 +3080,36 @@
         },
         "result": {
           "$ref": "#/$defs/Metrics",
+          "description": "The command's result."
+        },
+        "success": {
+          "description": "Always `true` here.",
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/ResultTag",
+          "description": "`\"result\"`."
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "success",
+        "result"
+      ],
+      "type": "object"
+    },
+    "Success_for_PairingCreateResult": {
+      "description": "A successful `result`: exactly one per command.",
+      "properties": {
+        "id": {
+          "description": "The command's id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "$ref": "#/$defs/PairingCreateResult",
           "description": "The command's result."
         },
         "success": {
@@ -2214,6 +3279,36 @@
       ],
       "type": "object"
     },
+    "Success_for_WebrtcRenegotiateResult": {
+      "description": "A successful `result`: exactly one per command.",
+      "properties": {
+        "id": {
+          "description": "The command's id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "$ref": "#/$defs/WebrtcRenegotiateResult",
+          "description": "The command's result."
+        },
+        "success": {
+          "description": "Always `true` here.",
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/ResultTag",
+          "description": "`\"result\"`."
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "success",
+        "result"
+      ],
+      "type": "object"
+    },
     "SupervisorMetrics": {
       "description": "The supervisor process.",
       "properties": {
@@ -2274,6 +3369,41 @@
       ],
       "type": "object"
     },
+    "TalkerReason": {
+      "description": "Why a stream's talker changed: the `reason` of `talker_changed`.",
+      "oneOf": [
+        {
+          "const": "claimed",
+          "description": "A session's offer (`webrtc/offer` or `webrtc/renegotiate`) asked\nfor talk-back while nobody held the backchannel; it holds it now.",
+          "type": "string"
+        },
+        {
+          "const": "session_closed",
+          "description": "The talker's session closed; the backchannel is free.",
+          "type": "string"
+        },
+        {
+          "const": "released",
+          "description": "`backchannel/release` freed it; the next offer that asks for\ntalk-back claims it.",
+          "type": "string"
+        },
+        {
+          "const": "renegotiated",
+          "description": "The talker's re-offer (`webrtc/renegotiate`) dropped talk-back;\nthe backchannel is free.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The camera refused the talker's backchannel session, the session\ndid not open in time, or its connection was lost while the talker\nheld it: the backchannel is free, and the talker's session got a\n`backchannel_declined` warning with reason `refused`.",
+          "type": "string"
+        },
+        {
+          "const": "opted_out",
+          "description": "No stream on the talker's connection asks for the camera's\nbackchannel any more (the last one that did was put without the\nRTSP option `backchannel`): the camera's backchannel session is\nclosed and the backchannel is no longer offered.",
+          "type": "string"
+        }
+      ]
+    },
     "TrackInfo": {
       "description": "A track as `stream/get` reports it.",
       "properties": {
@@ -2292,6 +3422,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "channels": {
+          "description": "An audio track's channel count: 1 for G.711 and G.722 (RFC 3551\n§4.5), the stream's own for Opus and AAC. Absent where\n`sample_rate` is.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "codec": {
           "description": "The codec name (`h264`, `aac_lc`).",
           "type": "string"
@@ -2309,6 +3449,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "height": {
+          "description": "A video track's picture height in pixels, present with `width`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "id": {
           "description": "`v0`, `a0`, `a1`.",
           "type": "string"
@@ -2317,9 +3466,47 @@
           "description": "`video` or `audio`.",
           "type": "string"
         },
+        "preroll": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrackPreroll"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the track's pre-roll ring holds for clips; null without a\nwindow (`stream/put`'s `preroll_ms` 0). The worker's figures,\npushed once per second."
+        },
+        "profile_level_id": {
+          "description": "An H.264 track's `profile-level-id` (RFC 6184 §8.1): its sequence\nparameter set's `profile_idc`, constraint flags and `level_idc` as\nsix lowercase hex digits, as an SDP `fmtp` spells them (`42e01f`).\nAbsent on other codecs, and until the camera sent its SPS.",
+          "pattern": "^[0-9a-f]{6}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sample_rate": {
+          "description": "An audio track's sampling rate in Hz, which is not always its RTP\nclock rate: G.722 samples at 16000 on an 8000 clock (RFC 3551\n§4.5.2), Opus is decoded at 48000 (RFC 7587 §4.1), AAC at its\n`AudioSpecificConfig`'s rate (ISO/IEC 14496-3 §1.6.2.1). Absent on\nvideo tracks and on codecs the daemon cannot carry.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "sync": {
           "description": "How the track is timed now: `arrival` until the camera's first\nSender Report for it, `sender_reports` from then on, `arrival` again\non a new timeline until the next report; at most a second old. A\nderived track's is its source's.",
           "type": "string"
+        },
+        "width": {
+          "description": "A video track's picture width in pixels, cropping applied (ISO/IEC\n14496-10 §7.4.2.1.1, ITU-T H.265 §7.4.3.2.1). Absent on audio and\nMJPEG tracks, and until the camera sent its SPS.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
@@ -2329,6 +3516,88 @@
         "sync",
         "frames",
         "bytes"
+      ],
+      "type": "object"
+    },
+    "TrackPreroll": {
+      "description": "A track's pre-roll ring, as `stream/get` reports it: whole GOPs of the\nnewest media, kept for clips while the stream has a window.",
+      "properties": {
+        "bytes": {
+          "description": "The memory the ring holds: its frames' payloads plus a fixed cost\nper frame, at most `limits.preroll_bytes`. The open GOP is also in\nthe track's GOP cache, so the two overlap; the frames are shared,\nnot copied.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "held_ms": {
+          "description": "The window it holds, in milliseconds: from its oldest keyframe to\nits newest frame; shorter than `preroll_ms` while it fills, after\na reconnect, or when `limits.preroll_bytes` caps it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncations": {
+          "description": "GOPs larger than `limits.preroll_bytes` the ring could keep only\nthe start of.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bytes",
+        "held_ms",
+        "truncations"
+      ],
+      "type": "object"
+    },
+    "WarningCode": {
+      "description": "The code of a `warning` event: every code a session may warn with,\nand nothing else.",
+      "oneOf": [
+        {
+          "const": "audio_codec_unsupported",
+          "description": "Audio omitted from the session; the rest of it continues.",
+          "type": "string"
+        },
+        {
+          "const": "turn_unsupported",
+          "description": "A `turns:` entry of `ice_servers` was ignored.",
+          "type": "string"
+        },
+        {
+          "const": "av_sync_lost",
+          "description": "Audio withdrawn because sync could not be held.",
+          "type": "string"
+        },
+        {
+          "const": "h264_profile_mismatch",
+          "description": "The browser did not offer the stream's H.264 profile.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_candidate",
+          "description": "A `webrtc/candidate` the session could not parse was ignored.",
+          "type": "string"
+        },
+        {
+          "const": "frame_over_browser_limit",
+          "description": "A video frame needed more RTP packets than some libwebrtc receivers\nassemble; it was sent whole.",
+          "type": "string"
+        },
+        {
+          "const": "backchannel_declined",
+          "description": "The offer asked for talk-back the session did not get; `reason`\nsays why.",
+          "type": "string"
+        }
+      ]
+    },
+    "WebrtcRenegotiateResult": {
+      "description": "`webrtc/renegotiate`'s result.",
+      "properties": {
+        "sdp": {
+          "description": "The SDP answer to the re-offer.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sdp"
       ],
       "type": "object"
     },
@@ -2462,6 +3731,9 @@
     "$ref": "#/$defs/Command"
   },
   "events": {
+    "clip/start": {
+      "$ref": "#/$defs/EventFrame_for_ClipEvent"
+    },
     "session/adopt": {
       "$ref": "#/$defs/EventFrame_for_SessionEvent"
     },
@@ -2479,11 +3751,29 @@
     "$ref": "#/$defs/Hello"
   },
   "results": {
+    "backchannel/release": {
+      "$ref": "#/$defs/Success_for_BackchannelReleaseResult"
+    },
+    "clients/list": {
+      "$ref": "#/$defs/Success_for_ClientList"
+    },
+    "clients/remove": {
+      "$ref": "#/$defs/Success_for_Empty"
+    },
+    "clip/start": {
+      "$ref": "#/$defs/Success_for_ClipStartResult"
+    },
+    "clip/stop": {
+      "$ref": "#/$defs/Success_for_Empty"
+    },
     "info": {
       "$ref": "#/$defs/Success_for_InfoResult"
     },
     "metrics/get": {
       "$ref": "#/$defs/Success_for_Metrics"
+    },
+    "pairing/create": {
+      "$ref": "#/$defs/Success_for_PairingCreateResult"
     },
     "ping": {
       "$ref": "#/$defs/Pong"
@@ -2526,6 +3816,9 @@
     },
     "webrtc/offer": {
       "$ref": "#/$defs/Success_for_Empty"
+    },
+    "webrtc/renegotiate": {
+      "$ref": "#/$defs/Success_for_WebrtcRenegotiateResult"
     }
   },
   "shutdown": {
