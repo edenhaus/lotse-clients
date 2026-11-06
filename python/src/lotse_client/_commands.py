@@ -20,13 +20,23 @@ from mashumaro.codecs.basic import BasicDecoder
 
 from lotse_client.models import (
     AudioMode,
+    BackchannelReleaseCommand,
+    BackchannelReleaseResult,
+    ClientList,
+    ClientsListCommand,
+    ClientsRemoveCommand,
     IceServer,
     InfoCommand,
     InfoResult,
     Metrics,
     MetricsGetCommand,
     Orientation,
+    PairingCreateCommand,
+    PairingCreateResult,
     PingCommand,
+    RecordingCreateCommand,
+    RecordingCreateResult,
+    RecordingEvent,
     SchemaCommand,
     Session,
     SessionAdoptCommand,
@@ -48,6 +58,8 @@ from lotse_client.models import (
     UnsubscribeCommand,
     WebrtcCandidateCommand,
     WebrtcOfferCommand,
+    WebrtcRenegotiateCommand,
+    WebrtcRenegotiateResult,
 )
 
 if TYPE_CHECKING:
@@ -64,6 +76,9 @@ STREAM_EVENTS: BasicDecoder[StreamEvent] = BasicDecoder(StreamEvent)
 
 SESSION_EVENTS: BasicDecoder[SessionEvent] = BasicDecoder(SessionEvent)
 """Decodes the events of `webrtc/offer`, `session/adopt`."""
+
+RECORDING_EVENTS: BasicDecoder[RecordingEvent] = BasicDecoder(RecordingEvent)
+"""Decodes the events of `recording/create`."""
 
 type Request = Callable[[Model], Awaitable[dict[str, Any]]]
 """The transport's `_request`: sends a command, returns its `result`."""
@@ -89,6 +104,53 @@ class MetricsCommands:
         return Metrics.from_dict(await self._request(command))
 
 
+class PairingCommands:
+    """The `pairing/...` commands, as `client.pairing.<verb>(...)`."""
+
+    def __init__(self, request: Request, subscribe: Subscribe) -> None:
+        """Bind the transport's two primitives."""
+        self._request = request
+        self._subscribe = subscribe
+
+    async def create(self) -> PairingCreateResult:
+        """`pairing/create`: a one-time pairing code for the control TLS listener.
+
+        Replacing any open one; only on the Unix socket.
+        """
+        command = PairingCreateCommand(id=NEW)
+        return PairingCreateResult.from_dict(await self._request(command))
+
+
+class ClientsCommands:
+    """The `clients/...` commands, as `client.clients.<verb>(...)`."""
+
+    def __init__(self, request: Request, subscribe: Subscribe) -> None:
+        """Bind the transport's two primitives."""
+        self._request = request
+        self._subscribe = subscribe
+
+    async def list(self) -> ClientList:
+        """`clients/list`: every client the control TLS listener lets in.
+
+        Fixed by the configuration or enrolled by pairing.
+        """
+        command = ClientsListCommand(id=NEW)
+        return ClientList.from_dict(await self._request(command))
+
+    async def remove(self, *, pin: str) -> None:
+        """`clients/remove`: removes an enrolled client and closes its control connections.
+
+        Idempotent. Over the TLS listener a client may remove only itself; a fixed pin
+        cannot be removed.
+
+        Args:
+            pin: The client certificate's SHA-256, 64 hex digits, optionally with a colon
+                between each pair.
+        """
+        command = ClientsRemoveCommand(id=NEW, pin=pin)
+        await self._request(command)
+
+
 class StreamCommands:
     """The `stream/...` commands, as `client.stream.<verb>(...)`."""
 
@@ -105,6 +167,7 @@ class StreamCommands:
         audio: AudioMode = "auto",
         orientation: Orientation = "no_transform",
         preload: bool = False,
+        prerecord_ms: int = 0,
     ) -> StreamPutResult:
         """`stream/put`: the idempotent upsert of a stream's desired state.
 
@@ -119,6 +182,14 @@ class StreamCommands:
                 reconnected after failures while set, so the first viewer gets a frame from
                 the warm GOP cache. Changing only this never reconnects; turning it off with
                 no viewers starts the linger.
+            prerecord_ms: Keep the last `prerecord_ms` milliseconds of the stream's media in
+                memory, so a `recording/create` can begin before it was asked for; 0, the
+                default, keeps none. At most `limits.max_prerecord_ms`. What it holds
+                follows the stream's bitrate; only a stream far above any real camera's
+                reaches `limits.max_prerecord_bytes`, its tracks together, and holds a
+                shorter window (`stream/get` reports it). Not a reason to connect: the
+                window fills only while `preload` or a viewer keeps the source connected.
+                Changing only this never reconnects.
         """
         command = StreamPutCommand(
             id=NEW,
@@ -127,6 +198,7 @@ class StreamCommands:
             audio=audio,
             orientation=orientation,
             preload=preload,
+            prerecord_ms=prerecord_ms,
         )
         return StreamPutResult.from_dict(await self._request(command))
 
@@ -223,6 +295,18 @@ class WebrtcCommands:
         )
         await self._request(command)
 
+    async def renegotiate(self, *, sdp: str, session_id: str) -> WebrtcRenegotiateResult:
+        """`webrtc/renegotiate`: a re-offer for an answered session.
+
+        Taken only from the connection that owns it; the result carries the answer.
+
+        Args:
+            sdp: The browser's SDP re-offer.
+            session_id: The session.
+        """
+        command = WebrtcRenegotiateCommand(id=NEW, sdp=sdp, session_id=session_id)
+        return WebrtcRenegotiateResult.from_dict(await self._request(command))
+
 
 class SessionCommands:
     """The `session/...` commands, as `client.session.<verb>(...)`."""
@@ -265,6 +349,79 @@ class SessionCommands:
         return await self._subscribe(command, SESSION_EVENTS)
 
 
+class BackchannelCommands:
+    """The `backchannel/...` commands, as `client.backchannel.<verb>(...)`."""
+
+    def __init__(self, request: Request, subscribe: Subscribe) -> None:
+        """Bind the transport's two primitives."""
+        self._request = request
+        self._subscribe = subscribe
+
+    async def release(
+        self, *, stream_id: str, session_id: str | None = None
+    ) -> BackchannelReleaseResult:
+        """`backchannel/release`: frees the camera's backchannel from its talker.
+
+        Or only from the session given.
+
+        Args:
+            stream_id: The stream whose camera's backchannel to free.
+            session_id: Free it only if this session holds it when the worker handles the
+                release, checked atomically against a claim, so a viewer that stops talking
+                never frees the backchannel another session claimed in the meantime; a
+                release that finds another talker, or none, changes nothing. Absent, it is
+                freed from whichever session holds it.
+        """
+        command = BackchannelReleaseCommand(id=NEW, stream_id=stream_id, session_id=session_id)
+        return BackchannelReleaseResult.from_dict(await self._request(command))
+
+
+class RecordingCommands:
+    """The `recording/...` commands, as `client.recording.<verb>(...)`."""
+
+    def __init__(self, request: Request, subscribe: Subscribe) -> None:
+        """Bind the transport's two primitives."""
+        self._request = request
+        self._subscribe = subscribe
+
+    async def create(
+        self,
+        *,
+        duration_ms: int,
+        stream_id: str,
+        audio: bool = True,
+        prerecord_ms: int = 0,
+        recording_id: str | None = None,
+    ) -> Subscription[RecordingEvent]:
+        """`recording/create`: records a stream for a fixed duration.
+
+        Its bytes are fetched with `GET /v0/recording/{recording_id}`.
+
+        Args:
+            duration_ms: How long the recording runs after now, in milliseconds, 1 to
+                `limits.max_recording_ms`.
+            stream_id: The stream to record.
+            audio: Take the stream's audio into the recording: AAC-LC and Opus as they are,
+                G.711 (PCMU, PCMA) and G.722 transcoded to Opus; any other codec is left out
+                with an `audio_omitted` warning. `false` makes a video-only recording.
+            prerecord_ms: How far before now the recording should start, in milliseconds, up
+                to `limits.max_prerecord_ms`; what the window holds bounds what it gets
+                (`started.prerecord_ms`).
+            recording_id: The client's recording id, `^[A-Za-z0-9._-]{1,128}$` but `.` and
+                `..`, which would be dot segments of the result's `url` (RFC 3986 §3.3),
+                unique among the open recordings; a ULID when absent.
+        """
+        command = RecordingCreateCommand(
+            id=NEW,
+            duration_ms=duration_ms,
+            stream_id=stream_id,
+            audio=audio,
+            prerecord_ms=prerecord_ms,
+            recording_id=recording_id,
+        )
+        return await self._subscribe(command, RECORDING_EVENTS)
+
+
 class Commands(ABC):
     """Every command as a typed method or a namespace of them.
 
@@ -275,12 +432,20 @@ class Commands(ABC):
         """Bind every namespace to this transport."""
         self.metrics = MetricsCommands(self._request, self._subscribe)
         """`metrics/get`."""
+        self.pairing = PairingCommands(self._request, self._subscribe)
+        """`pairing/create`."""
+        self.clients = ClientsCommands(self._request, self._subscribe)
+        """`clients/list`, `clients/remove`."""
         self.stream = StreamCommands(self._request, self._subscribe)
         """`stream/put`, `stream/get`, `stream/list`, `stream/delete`, `stream/subscribe`."""
         self.webrtc = WebrtcCommands(self._request, self._subscribe)
-        """`webrtc/offer`, `webrtc/candidate`."""
+        """`webrtc/offer`, `webrtc/candidate`, `webrtc/renegotiate`."""
         self.session = SessionCommands(self._request, self._subscribe)
         """`session/get`, `session/list`, `session/close`, `session/adopt`."""
+        self.backchannel = BackchannelCommands(self._request, self._subscribe)
+        """`backchannel/release`."""
+        self.recording = RecordingCommands(self._request, self._subscribe)
+        """`recording/create`."""
 
     @abstractmethod
     async def _request(self, command: Model) -> dict[str, Any]:
