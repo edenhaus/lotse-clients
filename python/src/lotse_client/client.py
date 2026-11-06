@@ -30,6 +30,7 @@ from lotse_client.subscription import Subscription
 from lotse_client.version import API_VERSION, WS_PATH, accepts
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import TracebackType
 
     from mashumaro.codecs.basic import BasicDecoder
@@ -83,7 +84,7 @@ class LotseClient(Commands):
         self._next_id = 1
         self._send_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future[Frame]] = {}
-        self._subscriptions: dict[int, tuple[Subscription[Any], BasicDecoder[Any]]] = {}
+        self._subscriptions: dict[int, tuple[Subscription[Any, Any], BasicDecoder[Any]]] = {}
         self._reader: asyncio.Task[None] | None = None
         self._closing = False
         self._shutdown = False
@@ -191,14 +192,16 @@ class LotseClient(Commands):
         """Send `command`; return its `result`, or `{}` for `pong`."""
         return await self._send(command, None)
 
-    async def _subscribe[E](self, command: Model, events: BasicDecoder[E]) -> Subscription[E]:
-        """Send a subscribing `command`; decode its events with `events`.
+    async def _subscribe[E, R](
+        self, command: Model, events: BasicDecoder[E], result: Callable[[Frame], R]
+    ) -> Subscription[E, R]:
+        """Send a subscribing `command`; decode its events with `events`, its result with `result`.
 
         The subscription is registered before the command is sent, so the
         events that follow the result are queued however soon they come.
         """
-        subscription: Subscription[E] = Subscription(self._unsubscribe_id)
-        await self._send(command, (subscription, events))
+        subscription: Subscription[E, R] = Subscription(self._unsubscribe_id)
+        subscription.result = result(await self._send(command, (subscription, events)))
         return subscription
 
     async def _unsubscribe_id(self, subscription_id: int) -> None:
@@ -209,7 +212,7 @@ class LotseClient(Commands):
             self._subscriptions.pop(subscription_id, None)
 
     async def _send(
-        self, command: Model, subscription: tuple[Subscription[Any], BasicDecoder[Any]] | None
+        self, command: Model, subscription: tuple[Subscription[Any, Any], BasicDecoder[Any]] | None
     ) -> Frame:
         """Send `command` with the next id and wait for its answer.
 

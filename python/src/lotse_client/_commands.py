@@ -10,7 +10,7 @@ A command named `domain/verb` is the method `verb` of the `domain` namespace
 client. Each method builds the generated command class, sends it through the
 transport and decodes the result the bundle names for it. A subscribing
 command, one the bundle lists an event type for, returns a `Subscription` of
-those events instead.
+those events instead, which carries the decoded result as its `result`.
 """
 
 from abc import ABC, abstractmethod
@@ -80,6 +80,11 @@ SESSION_EVENTS: BasicDecoder[SessionEvent] = BasicDecoder(SessionEvent)
 RECORDING_EVENTS: BasicDecoder[RecordingEvent] = BasicDecoder(RecordingEvent)
 """Decodes the events of `recording/create`."""
 
+
+def no_result(_: dict[str, Any]) -> None:
+    """The result of a subscribing command whose result is empty."""
+
+
 type Request = Callable[[Model], Awaitable[dict[str, Any]]]
 """The transport's `_request`: sends a command, returns its `result`."""
 
@@ -87,7 +92,9 @@ type Request = Callable[[Model], Awaitable[dict[str, Any]]]
 class Subscribe(Protocol):
     """The transport's `_subscribe`: a subscribing command, its events."""
 
-    async def __call__[E](self, command: Model, events: BasicDecoder[E]) -> Subscription[E]: ...
+    async def __call__[E, R](
+        self, command: Model, events: BasicDecoder[E], result: Callable[[dict[str, Any]], R]
+    ) -> Subscription[E, R]: ...
 
 
 class MetricsCommands:
@@ -232,7 +239,7 @@ class StreamCommands:
             stream_id: One stream, or all when absent.
         """
         command = StreamSubscribeCommand(id=NEW, stream_id=stream_id)
-        return await self._subscribe(command, STREAM_EVENTS)
+        return await self._subscribe(command, STREAM_EVENTS, no_result)
 
 
 class WebrtcCommands:
@@ -265,7 +272,7 @@ class WebrtcCommands:
         command = WebrtcOfferCommand(
             id=NEW, sdp=sdp, stream_id=stream_id, ice_servers=ice_servers, session_id=session_id
         )
-        return await self._subscribe(command, SESSION_EVENTS)
+        return await self._subscribe(command, SESSION_EVENTS, no_result)
 
     async def candidate(
         self,
@@ -346,7 +353,7 @@ class SessionCommands:
             session_id: The session.
         """
         command = SessionAdoptCommand(id=NEW, session_id=session_id)
-        return await self._subscribe(command, SESSION_EVENTS)
+        return await self._subscribe(command, SESSION_EVENTS, no_result)
 
 
 class BackchannelCommands:
@@ -392,7 +399,7 @@ class RecordingCommands:
         audio: bool = True,
         prerecord_ms: int = 0,
         recording_id: str | None = None,
-    ) -> Subscription[RecordingEvent]:
+    ) -> Subscription[RecordingEvent, RecordingCreateResult]:
         """`recording/create`: records a stream for a fixed duration.
 
         Its bytes are fetched with `GET /v0/recording/{recording_id}`.
@@ -419,7 +426,7 @@ class RecordingCommands:
             prerecord_ms=prerecord_ms,
             recording_id=recording_id,
         )
-        return await self._subscribe(command, RECORDING_EVENTS)
+        return await self._subscribe(command, RECORDING_EVENTS, RecordingCreateResult.from_dict)
 
 
 class Commands(ABC):
@@ -452,8 +459,10 @@ class Commands(ABC):
         """Send `command`; return its `result`, or `{}` for `pong`."""
 
     @abstractmethod
-    async def _subscribe[E](self, command: Model, events: BasicDecoder[E]) -> Subscription[E]:
-        """Send a subscribing `command`; decode its events with `events`."""
+    async def _subscribe[E, R](
+        self, command: Model, events: BasicDecoder[E], result: Callable[[dict[str, Any]], R]
+    ) -> Subscription[E, R]:
+        """Send a subscribing `command`; decode its events and its result."""
 
     async def ping(self) -> None:
         """`ping`: answered with `pong`, not a `result`."""
