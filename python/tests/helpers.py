@@ -133,6 +133,6 @@ STREAM = {
         }
     ],
     "sessions": ["01J8"],
-    "stats": {"keyframe_requests": 3},
+    "stats": {"packets_lost": 3},
 }
 """`stream/get`'s example result, trimmed."""

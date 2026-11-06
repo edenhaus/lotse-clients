@@ -47,8 +47,13 @@ API_VERSION_LINE = re.compile(r'^API_VERSION = ".*"$', re.MULTILINE)
 LINE_LENGTH = 100
 """ruff's line length (`pyproject.toml`), for the docstrings ruff does not wrap."""
 INDENT = "    "
-SUBSCRIBE_SIGNATURE = "(self, command: Model, events: BasicDecoder[E]) -> Subscription[E]"
-"""The transport's `_subscribe`, after its type parameter."""
+SUBSCRIBE_SIGNATURE = (
+    "[E, R](self, command: Model, events: BasicDecoder[E], result: Callable[[dict[str, Any]], R])"
+    " -> Subscription[E, R]"
+)
+"""The transport's `_subscribe`, from its type parameters on."""
+NO_RESULT = "no_result"
+"""What a subscribing command with an empty result passes as its result's decoder."""
 
 TYPING_NAMES = frozenset({"Any", "Annotated", "Literal"})
 """What `models.py` imports from `typing`, re-imported when an annotation uses it."""
@@ -67,7 +72,7 @@ A command named `domain/verb` is the method `verb` of the `domain` namespace
 client. Each method builds the generated command class, sends it through the
 transport and decodes the result the bundle names for it. A subscribing
 command, one the bundle lists an event type for, returns a `Subscription` of
-those events instead.
+those events instead, which carries the decoded result as its `result`.
 """
 '''
 
@@ -112,6 +117,8 @@ class Method:
     def returns(self) -> str:
         """The method's return annotation."""
         if self.event is not None:
+            if self.result is not None:
+                return f"Subscription[{self.event}, {self.result}]"
             return f"Subscription[{self.event}]"
         if self.raw_result:
             return "dict[str, Any]"
@@ -331,7 +338,9 @@ def method_source(method: Method, indent: str) -> list[str]:
     lines.append(f"{indent + INDENT}command = {method.command_class}({arguments})")
     body = indent + INDENT
     if method.event is not None:
-        lines.append(f"{body}return await self._subscribe(command, {upper_snake(method.event)}S)")
+        decoder = NO_RESULT if method.result is None else f"{method.result}.from_dict"
+        events = f"{upper_snake(method.event)}S"
+        lines.append(f"{body}return await self._subscribe(command, {events}, {decoder})")
     elif method.raw_result:
         lines.append(f"{body}return await self._request(command)")
     elif method.result is not None:
@@ -383,8 +392,8 @@ def commands_source(roots: list[Method], namespaces: dict[str, list[Method]]) ->
             f'{INDENT * 2}"""Send `command`; return its `result`, or `{{}}` for `pong`."""',
             "",
             f"{INDENT}@abstractmethod",
-            f"{INDENT}async def _subscribe[E]{SUBSCRIBE_SIGNATURE}:",
-            f'{INDENT * 2}"""Send a subscribing `command`; decode its events with `events`."""',
+            f"{INDENT}async def _subscribe{SUBSCRIBE_SIGNATURE}:",
+            f'{INDENT * 2}"""Send a subscribing `command`; decode its events and its result."""',
         )
     )
     for method in roots:
@@ -479,6 +488,16 @@ def generate(bundle: dict[str, Any], models_source: str) -> str:
                 f'"""Decodes the events of {commands}."""',
             )
         )
+    if any(m.event is not None and m.result is None for m in methods):
+        lines.extend(
+            (
+                "",
+                "",
+                f"def {NO_RESULT}(_: dict[str, Any]) -> None:",
+                f'{INDENT}"""The result of a subscribing command whose result is empty."""',
+                "",
+            )
+        )
     lines.extend(
         (
             "",
@@ -489,7 +508,7 @@ def generate(bundle: dict[str, Any], models_source: str) -> str:
             "class Subscribe(Protocol):",
             f'{INDENT}"""The transport\'s `_subscribe`: a subscribing command, its events."""',
             "",
-            f"{INDENT}async def __call__[E]{SUBSCRIBE_SIGNATURE}: ...",
+            f"{INDENT}async def __call__{SUBSCRIBE_SIGNATURE}: ...",
         )
     )
     for namespace, group in namespaces.items():

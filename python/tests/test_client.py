@@ -65,7 +65,7 @@ METRICS = {
     },
     "worker_restarts": 0,
     "sessions": 1,
-    "streams": {"front": {"stalls": 1}},
+    "streams": {"front": {"frames_dropped": 1}},
 }
 SESSION = {
     "session_id": "s1",
@@ -121,11 +121,12 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
         "stream/list": {"streams": {"front": STREAM}},
         "session/get": SESSION,
         "session/list": {"sessions": [SESSION]},
+        "recording/create": {"recording_id": "r1", "url": "/v0/recording/r1"},
     }
     async with LotseClient(fake.path) as client:
         await client.ping()
         assert (await client.info()).limits.max_sessions_per_stream == 16
-        assert (await client.metrics.get()).streams["front"].stalls == 1
+        assert (await client.metrics.get()).streams["front"].frames_dropped == 1
         assert await client.schema() == {"api": "0.1.0"}
         put = await client.stream.put(
             stream_id="front", sources=[SourceSpec(url="rtsp://cam/")], preload=True
@@ -141,7 +142,10 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
         assert (await client.session.list()).sessions[0].session_id == "s1"
         await client.session.close(session_id="s1")
         adopted = await client.session.adopt(session_id="s1")
-        for subscription in (streams, offer, adopted):
+        assert (streams.result, offer.result, adopted.result) == (None, None, None)
+        recording = await client.recording.create(stream_id="front", duration_ms=1000)
+        assert recording.result.url == "/v0/recording/r1"
+        for subscription in (streams, offer, adopted, recording):
             await subscription.unsubscribe()
             assert subscription.ended
     sent = [(frame["type"], frame["id"]) for frame in fake.received]
@@ -161,6 +165,8 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
         "session/list",
         "session/close",
         "session/adopt",
+        "recording/create",
+        "unsubscribe",
         "unsubscribe",
         "unsubscribe",
         "unsubscribe",
@@ -175,7 +181,7 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
         "candidate": "",
         "sdp_mline_index": 0,
     }
-    assert [frame["subscription"] for frame in fake.received[15:]] == [9, 10, 15]
+    assert [frame["subscription"] for frame in fake.received[16:]] == [9, 10, 15, 16]
 
 
 async def test_ids_increase_strictly_however_many_tasks_send(fake: FakeDaemon) -> None:

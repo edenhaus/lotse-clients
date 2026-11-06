@@ -1,7 +1,8 @@
 """A subscription: the events the daemon pushes after a subscribing command.
 
-`stream/subscribe`, `webrtc/offer` and `session/adopt` subscribe; the
-command's id is the subscription's id, and every `event` frame carrying it
+`stream/subscribe`, `webrtc/offer`, `session/adopt` and `recording/create`
+subscribe; the command's id is the subscription's id, its decoded result is
+the subscription's `result` (`None` when the result is empty), and every `event` frame carrying it
 belongs here. The daemon sends no
 frame when a subscription ends on its side, except that a session's
 `closed` event is always its last, so iteration stops after an event of
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
-class Subscription[E]:
+class Subscription[E, R = None]:
     """The events of one subscription, as an async iterator.
 
     Events are queued as they arrive, so none are lost between the
@@ -31,6 +32,8 @@ class Subscription[E]:
         """Start empty; `unsubscribe` sends the `unsubscribe` command for an id."""
         self.id = 0
         """The subscribing command's id, set by the transport as it sends the command."""
+        self.result: R
+        """The subscribing command's decoded result, set by the transport before it returns this."""
         self._unsubscribe = unsubscribe
         self._queue: asyncio.Queue[E | None] = asyncio.Queue()
         """The events, then `None` after the last."""

@@ -18,6 +18,7 @@ from scripts import generate_commands as generator
 from tests.helpers import BUNDLE
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from mashumaro.codecs.basic import BasicDecoder
@@ -112,8 +113,10 @@ class Recorder(Commands):
         self.sent.append(("request", command))
         raise RecordedError
 
-    async def _subscribe[E](self, command: Model, events: BasicDecoder[E]) -> Subscription[E]:
-        del events  # never used: nothing is sent, so no event arrives
+    async def _subscribe[E, R](
+        self, command: Model, events: BasicDecoder[E], result: Callable[[dict[str, Any]], R]
+    ) -> Subscription[E, R]:
+        del events, result  # never used: nothing is sent, so neither a result nor an event arrives
         self.sent.append(("subscribe", command))
         raise RecordedError
 
@@ -232,10 +235,18 @@ def test_an_empty_result_returns_none_and_a_subscribing_command_its_events() -> 
     assert "MODES: BasicDecoder[Mode] = BasicDecoder(Mode)" in source
     assert '"""Decodes the events of `thing/do`."""' in source
     assert ") -> Subscription[Mode]:" in source
-    assert "return await self._subscribe(command, MODES)" in source
+    assert "return await self._subscribe(command, MODES, no_result)" in source
+    assert "def no_result(_: dict[str, Any]) -> None:" in source
     plain = generator.generate(tiny_bundle(result="Success_for_Empty"), TINY_MODELS)
     assert ") -> None:" in plain
     assert "        await self._request(command)\n" in plain
+
+
+def test_a_subscribing_command_with_a_result_carries_it_on_its_subscription() -> None:
+    source = generator.generate(tiny_bundle(event="EventFrame_for_Mode"), TINY_MODELS)
+    assert ") -> Subscription[Mode, ThingResult]:" in source
+    assert "return await self._subscribe(command, MODES, ThingResult.from_dict)" in source
+    assert "no_result" not in source, "nothing passes it, so it is not generated"
 
 
 def test_an_inline_result_schema_needs_no_reference() -> None:

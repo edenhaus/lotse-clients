@@ -28,8 +28,8 @@ def test_a_stream_decodes_with_nested_types_and_defaults() -> None:
     assert stream.sources[0].connection.worker is not None
     assert stream.sources[0].connection.worker.pid == 4711
     assert stream.tracks[0].audio_delay_ms == 88
-    assert stream.stats.keyframe_requests == 3
-    assert stream.stats.stalls == 0, "a counter the daemon left out is its default"
+    assert stream.stats.packets_lost == 3
+    assert stream.stats.frames_dropped == 0, "a counter the daemon left out is its default"
 
 
 def test_fields_a_newer_daemon_adds_are_ignored() -> None:
@@ -104,6 +104,7 @@ def test_commands_encode_like_the_contract_and_leave_out_none() -> None:
         "audio": "auto",
         "orientation": "no_transform",
         "preload": False,
+        "prerecord_ms": 0,
     }
     assert StreamSubscribeCommand(id=2).to_dict() == {"id": 2, "type": "stream/subscribe"}
     offer = WebrtcOfferCommand(
