@@ -45,6 +45,11 @@ from lotse_client.models import (
     SessionGetCommand,
     SessionList,
     SessionListCommand,
+    SignalingAnswerCommand,
+    SignalingCandidateCommand,
+    SignalingErrorCommand,
+    SignalingEvent,
+    SignalingSubscribeCommand,
     SourceSpec,
     Stream,
     StreamDeleteCommand,
@@ -79,6 +84,9 @@ SESSION_EVENTS: BasicDecoder[SessionEvent] = BasicDecoder(SessionEvent)
 
 RECORDING_EVENTS: BasicDecoder[RecordingEvent] = BasicDecoder(RecordingEvent)
 """Decodes the events of `recording/create`."""
+
+SIGNALING_EVENTS: BasicDecoder[SignalingEvent] = BasicDecoder(SignalingEvent)
+"""Decodes the events of `signaling/subscribe`."""
 
 
 def no_result(_: dict[str, Any]) -> None:
@@ -429,6 +437,77 @@ class RecordingCommands:
         return await self._subscribe(command, RECORDING_EVENTS, RecordingCreateResult.from_dict)
 
 
+class SignalingCommands:
+    """The `signaling/...` commands, as `client.signaling.<verb>(...)`."""
+
+    def __init__(self, request: Request, subscribe: Subscribe) -> None:
+        """Bind the transport's two primitives."""
+        self._request = request
+        self._subscribe = subscribe
+
+    async def subscribe(self, *, stream_id: str | None = None) -> Subscription[SignalingEvent]:
+        """`signaling/subscribe`: a subscription to the offers of one stream's signaled sources.
+
+        Or of every stream's. Its end (`unsubscribe`, the connection's close, a supersede)
+        ends every signal it holds at once, live ones included, without `closed`: their
+        sources connect again after their backoff.
+
+        Args:
+            stream_id: One stream, or all when absent.
+        """
+        command = SignalingSubscribeCommand(id=NEW, stream_id=stream_id)
+        return await self._subscribe(command, SIGNALING_EVENTS, no_result)
+
+    async def answer(self, *, sdp: str, signal_id: str) -> None:
+        """`signaling/answer`: the camera's answer to a signal's offer.
+
+        Args:
+            sdp: The SDP answer.
+            signal_id: The signal, as its `offer` event named it.
+        """
+        command = SignalingAnswerCommand(id=NEW, sdp=sdp, signal_id=signal_id)
+        await self._request(command)
+
+    async def candidate(
+        self,
+        *,
+        candidate: str,
+        signal_id: str,
+        sdp_mid: str | None = None,
+        sdp_mline_index: int | None = None,
+    ) -> None:
+        """`signaling/candidate`: a candidate of the camera's for a signal.
+
+        Args:
+            candidate: The `candidate:` attribute value; empty is end-of-candidates (RFC
+                8838 §13).
+            signal_id: The signal.
+            sdp_mid: The media section, when the camera named it.
+            sdp_mline_index: The media section's index, when the camera named it.
+        """
+        command = SignalingCandidateCommand(
+            id=NEW,
+            candidate=candidate,
+            signal_id=signal_id,
+            sdp_mid=sdp_mid,
+            sdp_mline_index=sdp_mline_index,
+        )
+        await self._request(command)
+
+    async def error(self, *, code: str, message: str, signal_id: str) -> None:
+        """`signaling/error`: the camera failed a signal, which ends; once per signal.
+
+        Args:
+            code: The client's code, `^[a-z0-9_]{1,64}$`; not `signal_rejected`, the
+                supervisor's own for a rejection of the source's signaling
+                (`invalid_request`).
+            message: For humans.
+            signal_id: The signal.
+        """
+        command = SignalingErrorCommand(id=NEW, code=code, message=message, signal_id=signal_id)
+        await self._request(command)
+
+
 class Commands(ABC):
     """Every command as a typed method or a namespace of them.
 
@@ -453,6 +532,8 @@ class Commands(ABC):
         """`backchannel/release`."""
         self.recording = RecordingCommands(self._request, self._subscribe)
         """`recording/create`."""
+        self.signaling = SignalingCommands(self._request, self._subscribe)
+        """`signaling/subscribe`, `signaling/answer`, `signaling/candidate`, `signaling/error`."""
 
     @abstractmethod
     async def _request(self, command: Model) -> dict[str, Any]:
@@ -470,7 +551,7 @@ class Commands(ABC):
         await self._request(command)
 
     async def info(self) -> InfoResult:
-        """`info`: version, build, schemes, outputs, codecs, limits and sandbox."""
+        """`info`: version, build, protocols, outputs, codecs, limits and sandbox."""
         command = InfoCommand(id=NEW)
         return InfoResult.from_dict(await self._request(command))
 
