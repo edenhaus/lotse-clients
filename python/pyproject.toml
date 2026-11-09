@@ -79,6 +79,8 @@ convention = "google"
   "S101", # pytest's assertions are plain `assert`
   "SLF001", # tests drive the transport's internals (a cancelled wait, a failed send)
 ]
+# A generated method's keyword-only parameters are its command's fields, however many.
+"src/lotse_client/_commands.py" = ["PLR0913"]
 # The command generator runs the environment's ruff on its output, with fixed arguments.
 "scripts/*" = ["S603"]
 
