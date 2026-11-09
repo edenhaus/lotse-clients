@@ -1,19 +1,24 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:best-practices",
-    ":semanticCommits",
-    "group:allNonMajor",
-    "schedule:weekly"
-  ],
+  "extends": ["config:best-practices", ":semanticCommits"],
   "labels": ["dependencies"],
-  "lockFileMaintenance": { "enabled": true },
+  "lockFileMaintenance": { "enabled": true, "schedule": ["* * * * 1"] },
   "pre-commit": { "enabled": true },
   "packageRules": [
     {
       "description": "ruff in the pre-commit hook and in python/pyproject.toml, updated together so the hook and `uv run ruff` never disagree",
       "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
       "groupName": "ruff"
+    },
+    {
+      "description": "uv (mise.toml) and its build backend uv_build (python/pyproject.toml), whose range follows uv's minor",
+      "matchPackageNames": ["uv", "uv_build"],
+      "groupName": "uv"
+    },
+    {
+      "description": "pytest and its plugins, which declare the pytest versions they support",
+      "matchPackageNames": ["pytest", "pytest-asyncio", "pytest-cov"],
+      "groupName": "pytest"
     }
   ]
 }
