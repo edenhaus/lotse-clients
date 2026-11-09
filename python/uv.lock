@@ -2,8 +2,11 @@ version = 1
 revision = 5
 requires-python = ">=3.14"
 resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version < '3.15'",
+    "python_full_version >= '3.15' and sys_platform != 'emscripten'",
+    "python_full_version < '3.15' and sys_platform != 'emscripten'",
+]
+supported-markers = [
+    "sys_platform != 'emscripten'",
 ]
 
 [[package]]
@@ -514,10 +517,10 @@ version = "0.91.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "argcomplete" },
-    { name = "black", marker = "sys_platform != 'emscripten'" },
+    { name = "black" },
     { name = "genson" },
     { name = "inflect" },
-    { name = "isort", marker = "sys_platform != 'emscripten'" },
+    { name = "isort" },
     { name = "jinja2" },
     { name = "pydantic", version = "2.13.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
     { name = "pydantic", version = "2.14.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
@@ -1279,7 +1282,7 @@ name = "pydantic"
 version = "2.13.5"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version < '3.15'",
+    "python_full_version < '3.15' and sys_platform != 'emscripten'",
 ]
 dependencies = [
     { name = "annotated-types" },
@@ -1297,7 +1300,7 @@ name = "pydantic"
 version = "2.14.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.15'",
+    "python_full_version >= '3.15' and sys_platform != 'emscripten'",
 ]
 dependencies = [
     { name = "annotated-types" },
@@ -1315,7 +1318,7 @@ name = "pydantic-core"
 version = "2.46.5"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version < '3.15'",
+    "python_full_version < '3.15' and sys_platform != 'emscripten'",
 ]
 dependencies = [
     { name = "typing-extensions" },
@@ -1359,7 +1362,7 @@ name = "pydantic-core"
 version = "2.50.4"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.15'",
+    "python_full_version >= '3.15' and sys_platform != 'emscripten'",
 ]
 dependencies = [
     { name = "typing-extensions" },

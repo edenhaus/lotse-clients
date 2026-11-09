@@ -53,6 +53,12 @@ release = ["twine==7.0.0"]
 requires = ["uv_build>=0.13,<0.14"]
 build-backend = "uv_build"
 
+[tool.uv]
+# The client reaches the daemon over a Unix socket, so it never runs in a browser (Pyodide,
+# sys_platform "emscripten"). Leaving emscripten out keeps uv from splitting the lock on it:
+# datamodel-code-generator requires black and isort only off emscripten.
+environments = ["sys_platform != 'emscripten'"]
+
 [tool.ruff]
 target-version = "py314"
 line-length = 100 # rustfmt's width, as in the Rust code
