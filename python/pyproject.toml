@@ -39,7 +39,7 @@ Daemon = "https://github.com/edenhaus/lotse"
 
 [dependency-groups]
 dev = [
-  "datamodel-code-generator==0.83.0",
+  "datamodel-code-generator==0.91.0",
   "mypy==2.4.0",
   "pytest==9.1.1",
   "pytest-asyncio==1.4.0",
