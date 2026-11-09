@@ -7,12 +7,16 @@ Needs `LOTSE_BIN`, a lotse binary built with the `source-fake` feature;
 
 import asyncio
 import json
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
 from lotse_client import API_VERSION, CommandError, LotseClient, Subscription
+from lotse_client._base import Model
+from lotse_client._commands import NEW
 from lotse_client.models import (
+    RtspSource,
     SessionEvent,
     SessionEventAnswer,
     SessionEventCandidate,
@@ -23,14 +27,24 @@ from lotse_client.models import (
     StreamEvent,
     StreamEventStream,
     StreamEventStreamRemoved,
+    StreamGetCommand,
 )
 from tests.helpers import BUNDLE
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-FAKE = [SourceSpec(url="fake://127.0.0.1/")]
-"""The fake source of lotse-core's test fakes."""
+
+@dataclass(frozen=True, kw_only=True)
+class FakeSource(Model):
+    """The fake source of lotse-core's test fakes: `test-util` builds only, so in no schema."""
+
+    url: str
+    protocol: Literal["fake"] = "fake"
+
+
+FAKE = cast("list[SourceSpec]", [FakeSource(url="fake://127.0.0.1/")])
+"""A source that goes live without a camera; `stream/get` reports a protocol no model decodes."""
 
 OFFER = "\r\n".join(
     [
@@ -91,19 +105,24 @@ async def test_streams_round_trip_and_fail_with_stable_codes(daemon: Path) -> No
         assert client.hello.api == API_VERSION
         await client.ping()
         info = await client.info()
-        assert "fake" in info.schemes
+        assert {"fake", "rtsp"} <= set(info.protocols)
         assert info.sandbox.mode == "off"
         assert await client.schema() == json.loads(BUNDLE.read_text()), (
             "the daemon serves the bundle this client was generated from"
         )
+        # A typed source round trips: no viewer and no preload, so nothing connects.
+        await client.stream.put(stream_id="cam", sources=[RtspSource(url="rtsp://127.0.0.1:9/")])
+        cam = await client.stream.get(stream_id="cam")
+        assert cam.sources[0].source == RtspSource(url="rtsp://127.0.0.1:9/")
+        assert list((await client.stream.list()).streams) == ["cam"]
+        await client.stream.delete(stream_id="cam")
         async with await client.stream.subscribe() as everything:
             put = await client.stream.put(stream_id="front", sources=FAKE, preload=True)
             assert put.created
             await until_live(everything, "front")
-            stream = await client.stream.get(stream_id="front")
-            assert stream.preload
-            assert stream.tracks[0].codec == "h264"
-            assert list((await client.stream.list()).streams) == ["front"]
+            stream = await client._request(StreamGetCommand(id=NEW, stream_id="front"))
+            assert stream["preload"]
+            assert stream["tracks"][0]["codec"] == "h264"
             assert (await client.metrics.get()).supervisor.pid > 0
             again = await client.stream.put(stream_id="front", sources=FAKE, preload=True)
             assert not again.created
@@ -115,8 +134,9 @@ async def test_streams_round_trip_and_fail_with_stable_codes(daemon: Path) -> No
         assert everything.ended
         failures = {
             "stream_not_found": client.stream.get(stream_id="front"),
-            "scheme_unsupported": client.stream.put(
-                stream_id="x", sources=[SourceSpec(url="rtmp://cam/")]
+            # protocol_unsupported needs a build without a protocol; this one has them all.
+            "invalid_request": client.stream.put(
+                stream_id="x", sources=[RtspSource(url="http://cam/")]
             ),
             "invalid_stream_id": client.stream.put(stream_id="no spaces", sources=FAKE),
             "subscription_not_found": client.unsubscribe(subscription=12345),

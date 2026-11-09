@@ -8,9 +8,9 @@ from lotse_client._commands import SESSION_EVENTS, STREAM_EVENTS
 from lotse_client.models import (
     Hello,
     IceServer,
+    RtspSource,
     SessionEventCandidate,
     SessionEventClosed,
-    SourceSpec,
     Stream,
     StreamEventStream,
     StreamEventStreamRemoved,
@@ -95,12 +95,20 @@ def test_hello_checks_its_tag() -> None:
 def test_commands_encode_like_the_contract_and_leave_out_none() -> None:
     # A `null` where the Rust type has a default but no Option is rejected
     # by the daemon (`options` of a source), so absent fields are left out.
-    put = StreamPutCommand(id=1, stream_id="front", sources=[SourceSpec(url="rtsp://cam/h264")])
+    put = StreamPutCommand(id=1, stream_id="front", sources=[RtspSource(url="rtsp://cam/h264")])
     assert put.to_dict() == {
         "id": 1,
         "type": "stream/put",
         "stream_id": "front",
-        "sources": [{"url": "rtsp://cam/h264"}],
+        "sources": [
+            {
+                "protocol": "rtsp",
+                "url": "rtsp://cam/h264",
+                "backchannel": False,
+                "timeout_ms": 10000,
+                "transport": "tcp",
+            }
+        ],
         "audio": "auto",
         "orientation": "no_transform",
         "preload": False,

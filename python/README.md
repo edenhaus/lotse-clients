@@ -7,10 +7,10 @@ the payload types are frozen dataclasses decoded with `mashumaro`.
 
 ```python
 from lotse_client import LotseClient
-from lotse_client.models import SourceSpec
+from lotse_client.models import RtspSource
 
 async with LotseClient("/run/lotse/lotse.sock") as client:
-    await client.stream.put(stream_id="front", sources=[SourceSpec(url="rtsp://cam/h264")])
+    await client.stream.put(stream_id="front", sources=[RtspSource(url="rtsp://cam/h264")])
     async with await client.stream.subscribe(stream_id="front") as events:
         async for event in events:
             print(event)
