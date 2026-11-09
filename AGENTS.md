@@ -8,7 +8,9 @@ the API.
 ## Commands
 
 Every check is a prek hook in `.pre-commit-config.yaml`; `mise run check`
-runs all of them.
+runs all of them. The zizmor hook runs offline; on `main` and weekly, CI's
+zizmor job runs the same pinned zizmor with its online audits and sends the
+findings to code scanning.
 
 | Command | What it does |
 |---|---|
