@@ -53,10 +53,10 @@ failed run is resumed with "Re-run failed jobs". Check a file with
 
 One-time setup before the first release:
 
-1. On PyPI, a pending trusted publisher for the project `lotse-client`
-   (Account settings, Publishing): owner `edenhaus`, repository
-   `lotse-clients`, workflow `release.yml`, environment `pypi`. The first
-   upload creates the project; add the other maintainers to it then.
+1. On PyPI, a trusted publisher for the project `lotse-client`, which
+   `0.0.0.dev0` reserves (the project's Manage page, Publishing, GitHub):
+   owner `edenhaus`, repository `lotse-clients`, workflow `release.yml`,
+   environment `pypi`.
 2. On GitHub, the environment `pypi` in this repository's settings, with
    deployment branches limited to `main` (and required reviewers, if a
    release should wait for a person's approval). The publish job is the
