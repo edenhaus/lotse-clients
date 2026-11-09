@@ -115,7 +115,7 @@ class PingCommand(Model):
 @dataclass(frozen=True, kw_only=True)
 class InfoCommand(Model):
     """
-    `info`: version, build, schemes, outputs, codecs, limits and sandbox.
+    `info`: version, build, protocols, outputs, codecs, limits and sandbox.
     """
 
     id: int
@@ -469,6 +469,106 @@ class RecordingCreateCommand(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SignalingSubscribeCommand(Model):
+    """
+    `signaling/subscribe`: a subscription to the offers of one
+    stream's signaled sources, or of every stream's. Its end
+    (`unsubscribe`, the connection's close, a supersede) ends every
+    signal it holds at once, live ones included, without `closed`:
+    their sources connect again after their backoff.
+    """
+
+    id: int
+    """
+    The command id, which becomes the subscription id.
+    """
+    type: Literal["signaling/subscribe"] = "signaling/subscribe"
+    stream_id: str | None = None
+    """
+    One stream, or all when absent.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SignalingAnswerCommand(Model):
+    """
+    `signaling/answer`: the camera's answer to a signal's offer.
+    """
+
+    id: int
+    """
+    The command id.
+    """
+    sdp: str
+    """
+    The SDP answer.
+    """
+    signal_id: str
+    """
+    The signal, as its `offer` event named it.
+    """
+    type: Literal["signaling/answer"] = "signaling/answer"
+
+
+@dataclass(frozen=True, kw_only=True)
+class SignalingCandidateCommand(Model):
+    """
+    `signaling/candidate`: a candidate of the camera's for a signal.
+    """
+
+    candidate: str
+    """
+    The `candidate:` attribute value; empty is end-of-candidates
+    (RFC 8838 §13).
+    """
+    id: int
+    """
+    The command id.
+    """
+    signal_id: str
+    """
+    The signal.
+    """
+    type: Literal["signaling/candidate"] = "signaling/candidate"
+    sdp_mid: str | None = None
+    """
+    The media section, when the camera named it.
+    """
+    sdp_mline_index: int | None = None
+    """
+    The media section's index, when the camera named it.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SignalingErrorCommand(Model):
+    """
+    `signaling/error`: the camera failed a signal, which ends; once
+    per signal.
+    """
+
+    code: str
+    """
+    The client's code, `^[a-z0-9_]{1,64}$`; not `signal_rejected`,
+    the supervisor's own for a rejection of the source's signaling
+    (`invalid_request`).
+    """
+    id: int
+    """
+    The command id.
+    """
+    message: str
+    """
+    For humans.
+    """
+    signal_id: str
+    """
+    The signal.
+    """
+    type: Literal["signaling/error"] = "signaling/error"
+
+
+@dataclass(frozen=True, kw_only=True)
 class ControlClient(Model):
     """
     One client certificate the control TLS listener lets in.
@@ -558,7 +658,8 @@ class DemuxMetrics(Model):
 class Empty(Model):
     """
     An empty result (`stream/delete`, `unsubscribe`, the subscriptions,
-    `webrtc/candidate`, `session/close`).
+    `webrtc/candidate`, `session/close`, `signaling/answer`,
+    `signaling/candidate`, `signaling/error`).
     """
 
 
@@ -572,7 +673,7 @@ type ErrorCode = Literal[
     "session_id_in_use",
     "subscription_not_found",
     "limit_reached",
-    "scheme_unsupported",
+    "protocol_unsupported",
     "source_in_use",
     "shutting_down",
     "not_permitted",
@@ -589,6 +690,7 @@ type ErrorCode = Literal[
     "recording_not_found",
     "recording_id_in_use",
     "recording_already_fetched",
+    "signal_not_found",
 ]
 """
 Every stable error code of a result or a `last_error`. `code` is the
@@ -1081,6 +1183,127 @@ type ShutdownTag = Annotated[Literal["shutdown"], "shutdown"]
 """
 
 
+type SignalCloseCode = Literal[
+    "source_stopped",
+    "answer_timeout",
+    "invalid_answer",
+    "ice_failed",
+    "consent_lost",
+    "peer_closed",
+    "camera_error",
+    "signaling_lost",
+    "worker_gone",
+    "internal_error",
+]
+"""
+The code of a signaling `closed` event: every reason a signal may end,
+and nothing else.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class SignalingEventOffer(Model):
+    """
+    A connection attempt of a signaled source opened the signal
+    `signal_id` and offers this SDP; the first event of every signal.
+    The signal belongs to this subscription: only its control
+    connection may answer, trickle or end it.
+    """
+
+    protocol: str
+    """
+    The signaled source's protocol (`webrtc`), one of
+    `info.protocols`.
+    """
+    sdp: str
+    """
+    The SDP offer (RFC 8829 §5.2).
+    """
+    signal_id: str
+    """
+    The signal, a ULID, new for every connection attempt.
+    """
+    stream_id: str
+    """
+    The stream whose source offers: the camera the client relays
+    the offer to, as a signaled source has no address.
+    """
+    type: Literal["offer"] = "offer"
+
+
+@dataclass(frozen=True, kw_only=True)
+class SignalingEventCandidate(Model):
+    """
+    A candidate of the source's, trickled after the offer (RFC 8838
+    §8); an empty `candidate` is end-of-candidates for its media
+    section (§8.2, §13), after which none of that section follows.
+    """
+
+    candidate: str
+    """
+    The `candidate:` attribute value, or empty.
+    """
+    sdp_mline_index: int
+    """
+    The media section's index; always set, 0 for the first.
+    """
+    signal_id: str
+    """
+    The signal.
+    """
+    type: Literal["candidate"] = "candidate"
+    sdp_mid: str | None = None
+    """
+    The media section it belongs to, when the source named it.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SignalingEventClosed(Model):
+    """
+    The signal ended; nothing more about it follows, and the client
+    ends the camera's session. A source whose attempt ended connects
+    again after its backoff, with a new signal.
+    """
+
+    code: SignalCloseCode
+    """
+    The stable code.
+    """
+    message: str
+    """
+    For humans; may change.
+    """
+    signal_id: str
+    """
+    The signal.
+    """
+    type: Literal["closed"] = "closed"
+
+
+@dataclass(frozen=True, kw_only=True)
+class SignalingEventSuperseded(Model):
+    """
+    Another `signaling/subscribe` took this subscription's scope (the
+    same stream, or every stream): the last event, after which the
+    subscription has ended and its signals with it, without a `closed`
+    each; their sources connect again, offering to the new subscription.
+    """
+
+    type: Literal["superseded"] = "superseded"
+
+
+type SignalingEvent = (
+    SignalingEventOffer | SignalingEventCandidate | SignalingEventClosed | SignalingEventSuperseded
+)
+"""
+An event of `signaling/subscribe`. Never coalesced or shed: a client
+too slow to take one is disconnected (close code 1008), and the
+signals of its subscription end. Each variant's schema title names the
+Python client's class for it.
+"""
+
+
 @dataclass(frozen=True, kw_only=True)
 class SourceBackchannel(Model):
     """
@@ -1101,20 +1324,43 @@ class SourceBackchannel(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SourceSpec(Model):
+class HttpSource(Model):
     """
-    One entry of `stream/put`'s `sources`.
+    HLS or MPEG-TS over HTTP.
     """
 
+    protocol: Literal["http"] = "http"
     url: str
     """
-    The source URL, credentials included; redacted everywhere it is
-    reported.
+    The source URL, a `http://` one, credentials in its userinfo; redacted everywhere it is reported, `stream/get` included.
     """
-    options: dict[str, Any] | None = None
+    max_bandwidth: int | None = None
     """
-    Per-scheme options, typed by the scheme's factory; unknown fields
-    there are rejected too.
+    The highest variant `BANDWIDTH` (RFC 8216 §4.3.4.2, bits per
+    second) to play from a multivariant playlist; `null`, the
+    default, is uncapped.
+    """
+    timeout_ms: int = 10000
+    """
+    How long each connect, each answer and each wait for body
+    bytes may take, in milliseconds.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class WebrtcSource(Model):
+    """
+    A WebRTC camera whose signaling the client relays.
+    """
+
+    protocol: Literal["webrtc"] = "webrtc"
+    data_channel: str | None = None
+    """
+    The label of a data channel to offer beside the media (RFC 8831,
+    RFC 8832), as the camera's integration asks for one: Nest refuses
+    an offer without an `application` m-line and wants
+    `dataSendChannel`. 1 to 64 characters, none a control character;
+    `null`, the default, offers none.
     """
 
 
@@ -1417,6 +1663,29 @@ Why a stream's talker changed: the `reason` of `talker_changed`.
 
 
 @dataclass(frozen=True, kw_only=True)
+class TlsTrust1(Model):
+    """
+    Exactly the certificate with this SHA-256 fingerprint: 64 hex
+    digits, upper or lower case, optionally with a colon between each
+    pair (what `openssl x509 -fingerprint -sha256` prints). Chain,
+    validity period and host name are not checked: a self-signed
+    camera certificate rarely names the host it is reached by.
+    """
+
+    pin: str
+
+
+type TlsTrust = Literal["roots"] | Literal["insecure"] | TlsTrust1
+"""
+Whom an `rtsps` or `https` source's TLS connection trusts: `"roots"`
+(the default), `"insecure"`, or `{"pin": "<SHA-256 fingerprint>"}`.
+RFC 7826 §19.2 and RFC 9110 §4.3.4 take the server's identity from
+RFC 2818 §3.1, which `roots` checks. In every mode the handshake
+signature is verified with the presented certificate's key.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
 class TrackPrerecord(Model):
     """
     A track's pre-record ring, as `stream/get` reports it: whole GOPs of the
@@ -1443,6 +1712,13 @@ class TrackPrerecord(Model):
     GOPs larger than its bound (`bytes`) the ring could keep only the
     start of.
     """
+
+
+type Transport = Literal["tcp", "udp"]
+"""
+How an `rtsp` source's RTP reaches the daemon (RFC 2326 §10.12,
+§12.39).
+"""
 
 
 type WarningCode = Literal[
@@ -1580,55 +1856,6 @@ class ClientList(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class StreamPutCommand(Model):
-    """
-    `stream/put`: the idempotent upsert of a stream's desired state.
-    """
-
-    id: int
-    """
-    The command id.
-    """
-    sources: list[SourceSpec]
-    """
-    The sources, in order; the first that provides a kind wins.
-    """
-    stream_id: str
-    """
-    The stream, `^[A-Za-z0-9._-]{1,128}$`.
-    """
-    type: Literal["stream/put"] = "stream/put"
-    audio: AudioMode = "auto"
-    """
-    Audio handling.
-    """
-    orientation: Orientation = "no_transform"
-    """
-    How the picture is turned for display. A change reaches the open
-    sessions too, from their next frame and without a new answer.
-    Changing only this never reconnects.
-    """
-    preload: bool = False
-    """
-    Keep the source connected without viewers: connected at put and
-    reconnected after failures while set, so the first viewer gets a
-    frame from the warm GOP cache. Changing only this never reconnects;
-    turning it off with no viewers starts the linger.
-    """
-    prerecord_ms: int = 0
-    """
-    Keep the last `prerecord_ms` milliseconds of the stream's media in
-    memory, so a `recording/create` can begin before it was asked for; 0, the
-    default, keeps none. At most `limits.max_prerecord_ms`. What it holds
-    follows the stream's bitrate; only a stream far above any real
-    camera's reaches `limits.max_prerecord_bytes`, its tracks together, and
-    holds a shorter window (`stream/get` reports it). Not a reason to
-    connect: the window fills only while `preload` or a viewer keeps
-    the source connected. Changing only this never reconnects.
-    """
-
-
-@dataclass(frozen=True, kw_only=True)
 class WebrtcOfferCommand(Model):
     """
     `webrtc/offer`: opens a session; the subscription's events carry the
@@ -1658,38 +1885,6 @@ class WebrtcOfferCommand(Model):
     """
 
 
-type Command = (
-    PingCommand
-    | InfoCommand
-    | MetricsGetCommand
-    | SchemaCommand
-    | PairingCreateCommand
-    | ClientsListCommand
-    | ClientsRemoveCommand
-    | StreamPutCommand
-    | StreamGetCommand
-    | StreamListCommand
-    | StreamDeleteCommand
-    | StreamSubscribeCommand
-    | UnsubscribeCommand
-    | WebrtcOfferCommand
-    | WebrtcCandidateCommand
-    | WebrtcRenegotiateCommand
-    | SessionGetCommand
-    | SessionListCommand
-    | SessionCloseCommand
-    | SessionAdoptCommand
-    | BackchannelReleaseCommand
-    | RecordingCreateCommand
-)
-"""
-Every command, tagged by `type`. Each variant's schema title names the
-Python client's class for it (`StreamPutCommand`), and its `type` names
-the client's method: `domain/verb` is `client.domain.verb(...)`, a type
-without a slash a method of the client itself.
-"""
-
-
 @dataclass(frozen=True, kw_only=True)
 class ConnectionInfo(Model):
     """
@@ -1704,6 +1899,26 @@ class ConnectionInfo(Model):
     worker: WorkerInfo | None = None
     """
     Its worker, while one runs.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class EventFrameForSignalingEvent(Model):
+    """
+    An `event` of a subscription; `id` is the subscribing command's.
+    """
+
+    event: SignalingEvent
+    """
+    The event.
+    """
+    id: int
+    """
+    The subscription's command id.
+    """
+    type: EventTag
+    """
+    `"event"`.
     """
 
 
@@ -1786,13 +2001,16 @@ class InfoResult(Model):
     """
     The output kinds compiled in.
     """
+    protocols: list[str]
+    """
+    The source protocols this build registered, sorted: the
+    `protocol`s `stream/put` takes here. A URL protocol's sources take
+    URLs of the scheme of its name (`rtsps`); the client relays the
+    signaling of the others (`webrtc`) through `signaling/subscribe`.
+    """
     sandbox: SandboxInfo
     """
     The sandbox.
-    """
-    schemes: list[str]
-    """
-    The URL schemes a client may route here.
     """
     version: str
     """
@@ -2052,46 +2270,143 @@ class Shutdown(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SourceInfo(Model):
+class RtspSource(Model):
     """
-    A source as `stream/get` reports it.
+    An RTSP camera.
     """
 
-    connection: ConnectionInfo
-    """
-    The shared connection.
-    """
-    protocol: str
-    """
-    The protocol (`rtsp`).
-    """
-    reconnects: int
-    """
-    Reconnects so far.
-    """
-    state: StreamState
-    """
-    The connection's state.
-    """
+    protocol: Literal["rtsp"] = "rtsp"
     url: str
     """
-    The URL redacted to its origin, `scheme://[****@]host[:port]`, then
-    `/****` when the path is anything but empty or `/` and `?****` when
-    a query is present: the path and query can carry secrets (a camera
-    key, a session token) as the userinfo can.
+    The source URL, a `rtsp://` one, credentials in its userinfo; redacted everywhere it is reported, `stream/get` included.
     """
-    backchannel: SourceBackchannel | None = None
+    backchannel: bool = False
     """
-    The camera's backchannel, as the connection's probe found it, while
-    the connection is live: what a microphone button is gated on. The
-    probe asks the camera on a connection of its own each time the
-    connection connects; nothing is opened until a talker claims it.
-    Null when the probe found none (the camera has none, refused the
-    question or could not be asked), when no stream on the connection
-    opted in (an RTSP source's `backchannel` option, off by default,
-    which turns the probe on and off without restarting the
-    connection), and while the connection is not live.
+    Ask the camera for its ONVIF backchannel, two-way audio's path
+    to its speaker. Once the stream's session plays, a `DESCRIBE`
+    with `Require: www.onvif.org/ver20/backchannel` (ONVIF Streaming
+    Specification §5.3.1) on a connection of its own asks whether
+    the camera has one, on every connect; a talker's claim opens it
+    in a session of its own and its release closes it, so the
+    camera's backchannel is free whenever nobody talks, and the
+    session that plays the stream never carries the header. Off by
+    default: the client knows which cameras talk back and opts a
+    stream in, so a camera without one never sees the header. It
+    does not tell connections apart: the connection a stream shares
+    asks iff one of its streams does. Opting in or out never
+    restarts the connection: an opt-in probes at once while the
+    stream plays (else at its next connect), and an offer that
+    requests talk-back meanwhile waits for the probe; the last
+    opt-out drops what the probe found and frees the backchannel
+    from its talker. A talk-back request the backchannel cannot
+    serve is answered without it, with a `backchannel_declined`
+    warning.
     """
+    timeout_ms: int = 10000
+    """
+    The read deadline, in milliseconds.
+    """
+    transport: Transport = "tcp"
+    """
+    `tcp`, the default, interleaves RTP on the RTSP connection;
+    `udp` takes it on ports of its own.
+    """
+    user_agent: str | None = None
+    """
+    The `User-Agent` to send instead of the daemon's: 1 to 256
+    printable ASCII characters, spaces or tabs only between them
+    (RFC 7230 §3.2, RFC 2326 §12.41); `null`, the default, sends
+    the daemon's.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class RtspsSource(Model):
+    """
+    An RTSP camera over TLS.
+    """
+
+    protocol: Literal["rtsps"] = "rtsps"
+    url: str
+    """
+    The source URL, a `rtsps://` one, credentials in its userinfo; redacted everywhere it is reported, `stream/get` included.
+    """
+    backchannel: bool = False
+    """
+    Ask the camera for its ONVIF backchannel, two-way audio's path
+    to its speaker. Once the stream's session plays, a `DESCRIBE`
+    with `Require: www.onvif.org/ver20/backchannel` (ONVIF Streaming
+    Specification §5.3.1) on a connection of its own asks whether
+    the camera has one, on every connect; a talker's claim opens it
+    in a session of its own and its release closes it, so the
+    camera's backchannel is free whenever nobody talks, and the
+    session that plays the stream never carries the header. Off by
+    default: the client knows which cameras talk back and opts a
+    stream in, so a camera without one never sees the header. It
+    does not tell connections apart: the connection a stream shares
+    asks iff one of its streams does. Opting in or out never
+    restarts the connection: an opt-in probes at once while the
+    stream plays (else at its next connect), and an offer that
+    requests talk-back meanwhile waits for the probe; the last
+    opt-out drops what the probe found and frees the backchannel
+    from its talker. A talk-back request the backchannel cannot
+    serve is answered without it, with a `backchannel_declined`
+    warning.
+    """
+    timeout_ms: int = 10000
+    """
+    The read deadline, in milliseconds.
+    """
+    tls: TlsTrust = "roots"
+    """
+    Whom the TLS connection trusts.
+    """
+    user_agent: str | None = None
+    """
+    The `User-Agent` to send instead of the daemon's: 1 to 256
+    printable ASCII characters, spaces or tabs only between them
+    (RFC 7230 §3.2, RFC 2326 §12.41); `null`, the default, sends
+    the daemon's.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class HttpsSource(Model):
+    """
+    HLS or MPEG-TS over HTTPS.
+    """
+
+    protocol: Literal["https"] = "https"
+    url: str
+    """
+    The source URL, a `https://` one, credentials in its userinfo; redacted everywhere it is reported, `stream/get` included.
+    """
+    max_bandwidth: int | None = None
+    """
+    The highest variant `BANDWIDTH` (RFC 8216 §4.3.4.2, bits per
+    second) to play from a multivariant playlist; `null`, the
+    default, is uncapped.
+    """
+    timeout_ms: int = 10000
+    """
+    How long each connect, each answer and each wait for body
+    bytes may take, in milliseconds.
+    """
+    tls: TlsTrust = "roots"
+    """
+    Whom the TLS connection trusts.
+    """
+
+
+type SourceSpec = RtspSource | RtspsSource | HttpSource | HttpsSource | WebrtcSource
+"""
+One entry of `stream/put`'s `sources`, named by its `protocol`, with
+the protocol's own fields beside it; `stream/get` reports each source
+in the same shape, defaults filled in and the URL redacted. A URL
+protocol's `url` has the protocol's name as its scheme. The protocols
+a build registered are `info.protocols`; one this build left out is
+refused with `protocol_unsupported`.
+"""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2384,6 +2699,91 @@ class TrackInfo(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
+class StreamPutCommand(Model):
+    """
+    `stream/put`: the idempotent upsert of a stream's desired state.
+    """
+
+    id: int
+    """
+    The command id.
+    """
+    sources: list[SourceSpec]
+    """
+    The sources, in order; the first that provides a kind wins.
+    """
+    stream_id: str
+    """
+    The stream, `^[A-Za-z0-9._-]{1,128}$`.
+    """
+    type: Literal["stream/put"] = "stream/put"
+    audio: AudioMode = "auto"
+    """
+    Audio handling.
+    """
+    orientation: Orientation = "no_transform"
+    """
+    How the picture is turned for display. A change reaches the open
+    sessions too, from their next frame and without a new answer.
+    Changing only this never reconnects.
+    """
+    preload: bool = False
+    """
+    Keep the source connected without viewers: connected at put and
+    reconnected after failures while set, so the first viewer gets a
+    frame from the warm GOP cache. Changing only this never reconnects;
+    turning it off with no viewers starts the linger.
+    """
+    prerecord_ms: int = 0
+    """
+    Keep the last `prerecord_ms` milliseconds of the stream's media in
+    memory, so a `recording/create` can begin before it was asked for; 0, the
+    default, keeps none. At most `limits.max_prerecord_ms`. What it holds
+    follows the stream's bitrate; only a stream far above any real
+    camera's reaches `limits.max_prerecord_bytes`, its tracks together, and
+    holds a shorter window (`stream/get` reports it). Not a reason to
+    connect: the window fills only while `preload` or a viewer keeps
+    the source connected. Changing only this never reconnects.
+    """
+
+
+type Command = (
+    PingCommand
+    | InfoCommand
+    | MetricsGetCommand
+    | SchemaCommand
+    | PairingCreateCommand
+    | ClientsListCommand
+    | ClientsRemoveCommand
+    | StreamPutCommand
+    | StreamGetCommand
+    | StreamListCommand
+    | StreamDeleteCommand
+    | StreamSubscribeCommand
+    | UnsubscribeCommand
+    | WebrtcOfferCommand
+    | WebrtcCandidateCommand
+    | WebrtcRenegotiateCommand
+    | SessionGetCommand
+    | SessionListCommand
+    | SessionCloseCommand
+    | SessionAdoptCommand
+    | BackchannelReleaseCommand
+    | RecordingCreateCommand
+    | SignalingSubscribeCommand
+    | SignalingAnswerCommand
+    | SignalingCandidateCommand
+    | SignalingErrorCommand
+)
+"""
+Every command, tagged by `type`. Each variant's schema title names the
+Python client's class for it (`StreamPutCommand`), and its `type` names
+the client's method: `domain/verb` is `client.domain.verb(...)`, a type
+without a slash a method of the client itself.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
 class EventFrameForRecordingEvent(Model):
     """
     An `event` of a subscription; `id` is the subscribing command's.
@@ -2440,6 +2840,51 @@ class EventFrameForStreamEvent(Model):
     type: EventTag
     """
     `"event"`.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceInfo(Model):
+    """
+    A source as `stream/get` reports it: the source in the shape
+    `stream/put` takes it, and its connection's state. The source is an
+    object of its own, not flattened in here: a protocol's fields may share
+    a name with the state's (`rtsp`'s `backchannel` option and the
+    `backchannel` the probe found).
+    """
+
+    connection: ConnectionInfo
+    """
+    The shared connection.
+    """
+    reconnects: int
+    """
+    Reconnects so far.
+    """
+    source: SourceSpec
+    """
+    The source as `stream/put` took it, its `protocol` and its fields
+    with every default filled in, its `url` redacted to its origin,
+    `scheme://[****@]host[:port]`, then `/****` when the path is
+    anything but empty or `/` and `?****` when a query is present: the
+    path and query can carry secrets (a camera key, a session token) as
+    the userinfo can.
+    """
+    state: StreamState
+    """
+    The connection's state.
+    """
+    backchannel: SourceBackchannel | None = None
+    """
+    The camera's backchannel, as the connection's probe found it, while
+    the connection is live: what a microphone button is gated on. The
+    probe asks the camera on a connection of its own each time the
+    connection connects; nothing is opened until a talker claims it.
+    Null when the probe found none (the camera has none, refused the
+    question or could not be asked), when no stream on the connection
+    opted in (an RTSP source's `backchannel` option, off by default,
+    which turns the probe on and off without restarting the
+    connection), and while the connection is not live.
     """
 
 

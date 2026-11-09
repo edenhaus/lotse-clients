@@ -109,8 +109,7 @@ STREAM = {
     "last_error": None,
     "sources": [
         {
-            "url": "rtsp://****@192.168.1.10:554/h264",
-            "protocol": "rtsp",
+            "source": {"protocol": "rtsp", "url": "rtsp://****@192.168.1.10:554/h264"},
             "state": "live",
             "reconnects": 2,
             "connection": {

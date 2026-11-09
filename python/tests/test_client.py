@@ -18,11 +18,11 @@ from lotse_client import (
     ProtocolError,
 )
 from lotse_client.models import (
+    RtspSource,
     SessionEventAnswer,
     SessionEventClosed,
     SessionEventSession,
     SessionEventState,
-    SourceSpec,
     StreamEventStream,
 )
 from tests.helpers import HELLO, NEXT_MAJOR, STREAM, FakeDaemon
@@ -30,7 +30,7 @@ from tests.helpers import HELLO, NEXT_MAJOR, STREAM, FakeDaemon
 INFO = {
     "version": "0.0.0",
     "build": {"target": "x86_64-unknown-linux-musl", "rustc": "1.90.0", "git_sha": None},
-    "schemes": ["rtsp"],
+    "protocols": ["rtsp"],
     "outputs": ["webrtc"],
     "features": [],
     "codecs": {"video": ["h264"], "audio": ["opus"]},
@@ -129,7 +129,7 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
         assert (await client.metrics.get()).streams["front"].frames_dropped == 1
         assert await client.schema() == {"api": "0.1.0"}
         put = await client.stream.put(
-            stream_id="front", sources=[SourceSpec(url="rtsp://cam/")], preload=True
+            stream_id="front", sources=[RtspSource(url="rtsp://cam/")], preload=True
         )
         assert put.created
         assert (await client.stream.get(stream_id="front")).state == "live"
@@ -172,7 +172,15 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
         "unsubscribe",
     ]
     assert [command_id for _, command_id in sent] == list(range(1, len(sent) + 1))
-    assert fake.received[4]["sources"] == [{"url": "rtsp://cam/"}]
+    assert fake.received[4]["sources"] == [
+        {
+            "protocol": "rtsp",
+            "url": "rtsp://cam/",
+            "backchannel": False,
+            "timeout_ms": 10000,
+            "transport": "tcp",
+        }
+    ]
     assert fake.received[4]["preload"] is True
     assert fake.received[10] == {
         "type": "webrtc/candidate",
