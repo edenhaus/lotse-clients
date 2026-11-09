@@ -42,10 +42,10 @@ mise run dist [out]          # the Python client's sdist and wheel, checked with
 ## Releasing
 
 Setting the version in `python/pyproject.toml` on `main` releases it, once
-`schema/api.json` is the bundle at lotse's tag `vX.Y.Z`.
+`schema/api.json` is the bundle at lotse's tag `X.Y.Z`.
 [`release`](.github/workflows/release.yml) builds the sdist and the wheel,
 publishes them to PyPI with Trusted Publishing, and tags the commit
-`lotse-client-vX.Y.Z` with a GitHub release of the same files. Verify a
+`X.Y.Z` with a GitHub release of that title and the same files. Verify a
 file's provenance with
 `gh attestation verify <file> --repo edenhaus/lotse-clients`.
 

@@ -56,5 +56,5 @@ its regeneration to the `schema` task.
 - Python: the package's version is the lotse release whose bundle
   `schema/api.json` is (0.0.0 before the first). Changing it on `main` is
   the release: `release.yml` publishes to PyPI and tags
-  `lotse-client-v<version>`; never tag by hand (README.md#releasing).
+  `<version>`; never tag by hand (README.md#releasing).
 - Conventional Commits, enforced on `commit-msg`.

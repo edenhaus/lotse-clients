@@ -5,9 +5,9 @@ name: release
 # The client's version is the lotse release whose API bundle schema/api.json is, so releasing is
 # a commit on main that sets python/pyproject.toml's version to that release. This workflow then
 # checks the bundle against lotse's tag, builds the sdist and the wheel, attests them, uploads
-# them to PyPI with Trusted Publishing and records the release as the tag
-# `lotse-client-v<version>` (release-plz's `<package>-v<version>`) with a GitHub release carrying
-# the same files. No one tags by hand: a version that already has its tag releases nothing.
+# them to PyPI with Trusted Publishing and records the release as the tag `<version>`, the bare
+# version as lotse tags its releases, with a GitHub release of that title carrying the same files.
+# No one tags by hand: a version that already has its tag releases nothing.
 #
 # A failed run is resumed with "Re-run failed jobs"; PyPI refuses a file it already has, so a
 # re-run of all jobs after the upload fails at the upload.
@@ -44,7 +44,7 @@ jobs:
         id: version
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("python/pyproject.toml", "rb"))["project"]["version"])')"
-          tag="lotse-client-v$version"
+          tag="$version"
           if [ "$version" = 0.0.0 ]; then
             echo "Version 0.0.0: no lotse release to follow yet, nothing to publish."
             exit 0
@@ -69,7 +69,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: edenhaus/lotse
-          ref: v${{ needs.version.outputs.version }}
+          ref: ${{ needs.version.outputs.version }}
           path: .lotse
           sparse-checkout: crates/lotse-api-types/schema
           persist-credentials: false
@@ -80,7 +80,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           if ! cmp -s schema/api.json .lotse/crates/lotse-api-types/schema/api.json; then
-            echo "::error::schema/api.json is not the API bundle of lotse v$VERSION: sync the schema from that tag first (sync-schema with ref v$VERSION)"
+            echo "::error::schema/api.json is not the API bundle of lotse $VERSION: sync the schema from that tag first (sync-schema with ref $VERSION)"
             exit 1
           fi
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
@@ -148,4 +148,4 @@ jobs:
           gh attestation verify lotse_client-$VERSION-py3-none-any.whl --repo $GH_REPO
           ```
           EOF
-          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "lotse-client $VERSION" --notes-file notes.md
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes.md
