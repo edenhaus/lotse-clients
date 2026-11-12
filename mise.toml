@@ -4,7 +4,7 @@
 [tools]
 prek = "0.5.10"
 zizmor = "1.32.0" # the workflows' security audit: the prek hook offline, CI's zizmor job online (one pin for both)
-uv = "0.13.7" # every Python client: its Python, dependencies and checks (python/uv.lock)
+uv = "0.13.8" # every Python client: its Python, dependencies and checks (python/uv.lock)
 
 # Git hooks are installed on every `mise install`, so nobody has to remember.
 [hooks]
