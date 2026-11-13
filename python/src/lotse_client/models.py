@@ -313,9 +313,9 @@ class WebrtcCandidateCommand(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class WebrtcRenegotiateCommand(Model):
+class WebrtcReofferCommand(Model):
     """
-    `webrtc/renegotiate`: a re-offer for an answered session, taken
+    `webrtc/reoffer`: a re-offer for an answered session, taken
     only from the connection that owns it; the result carries the
     answer.
     """
@@ -332,7 +332,7 @@ class WebrtcRenegotiateCommand(Model):
     """
     The session.
     """
-    type: Literal["webrtc/renegotiate"] = "webrtc/renegotiate"
+    type: Literal["webrtc/reoffer"] = "webrtc/reoffer"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1655,7 +1655,7 @@ class SupervisorMetrics(Model):
 
 
 type TalkerReason = Literal[
-    "claimed", "session_closed", "released", "renegotiated", "refused", "opted_out"
+    "claimed", "session_closed", "released", "reoffered", "refused", "opted_out"
 ]
 """
 Why a stream's talker changed: the `reason` of `talker_changed`.
@@ -1737,9 +1737,9 @@ and nothing else.
 
 
 @dataclass(frozen=True, kw_only=True)
-class WebrtcRenegotiateResult(Model):
+class WebrtcReofferResult(Model):
     """
-    `webrtc/renegotiate`'s result.
+    `webrtc/reoffer`'s result.
     """
 
     sdp: str
@@ -2202,7 +2202,7 @@ class Session(Model):
 class SessionEventWarning(Model):
     """
     Non-fatal. Each code comes at most once per session, but `backchannel_declined`, which
-    comes once per offer (`webrtc/offer` or `webrtc/renegotiate`) that
+    comes once per offer (`webrtc/offer` or `webrtc/reoffer`) that
     asked for talk-back the session did not get: the talk-back m-line
     was answered `inactive` (or `sendonly` when it carries the
     stream's audio too, RFC 3264 §6.1), and `reason` says why.
@@ -2594,7 +2594,7 @@ class SuccessForSessionList(Model):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SuccessForWebrtcRenegotiateResult(Model):
+class SuccessForWebrtcReofferResult(Model):
     """
     A successful `result`: exactly one per command.
     """
@@ -2603,7 +2603,7 @@ class SuccessForWebrtcRenegotiateResult(Model):
     """
     The command's id.
     """
-    result: WebrtcRenegotiateResult
+    result: WebrtcReofferResult
     """
     The command's result.
     """
@@ -2763,7 +2763,7 @@ type Command = (
     | UnsubscribeCommand
     | WebrtcOfferCommand
     | WebrtcCandidateCommand
-    | WebrtcRenegotiateCommand
+    | WebrtcReofferCommand
     | SessionGetCommand
     | SessionListCommand
     | SessionCloseCommand

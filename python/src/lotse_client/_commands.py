@@ -63,8 +63,8 @@ from lotse_client.models import (
     UnsubscribeCommand,
     WebrtcCandidateCommand,
     WebrtcOfferCommand,
-    WebrtcRenegotiateCommand,
-    WebrtcRenegotiateResult,
+    WebrtcReofferCommand,
+    WebrtcReofferResult,
 )
 
 if TYPE_CHECKING:
@@ -310,8 +310,8 @@ class WebrtcCommands:
         )
         await self._request(command)
 
-    async def renegotiate(self, *, sdp: str, session_id: str) -> WebrtcRenegotiateResult:
-        """`webrtc/renegotiate`: a re-offer for an answered session.
+    async def reoffer(self, *, sdp: str, session_id: str) -> WebrtcReofferResult:
+        """`webrtc/reoffer`: a re-offer for an answered session.
 
         Taken only from the connection that owns it; the result carries the answer.
 
@@ -319,8 +319,8 @@ class WebrtcCommands:
             sdp: The browser's SDP re-offer.
             session_id: The session.
         """
-        command = WebrtcRenegotiateCommand(id=NEW, sdp=sdp, session_id=session_id)
-        return WebrtcRenegotiateResult.from_dict(await self._request(command))
+        command = WebrtcReofferCommand(id=NEW, sdp=sdp, session_id=session_id)
+        return WebrtcReofferResult.from_dict(await self._request(command))
 
 
 class SessionCommands:
@@ -525,7 +525,7 @@ class Commands(ABC):
         self.stream = StreamCommands(self._request, self._subscribe)
         """`stream/put`, `stream/get`, `stream/list`, `stream/delete`, `stream/subscribe`."""
         self.webrtc = WebrtcCommands(self._request, self._subscribe)
-        """`webrtc/offer`, `webrtc/candidate`, `webrtc/renegotiate`."""
+        """`webrtc/offer`, `webrtc/candidate`, `webrtc/reoffer`."""
         self.session = SessionCommands(self._request, self._subscribe)
         """`session/get`, `session/list`, `session/close`, `session/adopt`."""
         self.backchannel = BackchannelCommands(self._request, self._subscribe)
