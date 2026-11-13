@@ -36,7 +36,7 @@ repos:
       - id: actionlint
   # The Python client's lint and format; its settings are in python/pyproject.toml.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.4 # the ruff in python/pyproject.toml; Renovate updates both in one PR
+    rev: v0.17.5 # the ruff in python/pyproject.toml; Renovate updates both in one PR
     hooks:
       - id: ruff-check
         files: ^python/

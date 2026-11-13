@@ -44,7 +44,7 @@ dev = [
   "pytest==9.2.0",
   "pytest-asyncio==1.4.1.post1",
   "pytest-cov==7.1.0",
-  "ruff==0.17.4",
+  "ruff==0.17.5",
 ]
 # `mise run dist`: the metadata PyPI renders, checked before the release uploads it.
 release = ["twine==7.0.0"]
