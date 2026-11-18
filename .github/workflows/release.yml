@@ -83,7 +83,7 @@ jobs:
             echo "::error::schema/api.json is not the API bundle of lotse $VERSION: sync the schema from that tag first (sync-schema with ref $VERSION)"
             exit 1
           fi
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install_args: uv
           cache: false # nothing cached reaches a release job
