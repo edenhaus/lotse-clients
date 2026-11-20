@@ -23,11 +23,21 @@ from lotse_client.models import (
     BackchannelReleaseCommand,
     BackchannelReleaseResult,
     ClientList,
+    ClientRole,
+    ClientsAddCommand,
     ClientsListCommand,
     ClientsRemoveCommand,
+    HlsCloseCommand,
+    HlsCreateCommand,
+    HlsCreateResult,
+    HlsEvent,
     IceServer,
     InfoCommand,
     InfoResult,
+    LiveCloseCommand,
+    LiveCreateCommand,
+    LiveCreateResult,
+    LiveEvent,
     Metrics,
     MetricsGetCommand,
     Orientation,
@@ -63,8 +73,8 @@ from lotse_client.models import (
     UnsubscribeCommand,
     WebrtcCandidateCommand,
     WebrtcOfferCommand,
-    WebrtcRenegotiateCommand,
-    WebrtcRenegotiateResult,
+    WebrtcReofferCommand,
+    WebrtcReofferResult,
 )
 
 if TYPE_CHECKING:
@@ -84,6 +94,12 @@ SESSION_EVENTS: BasicDecoder[SessionEvent] = BasicDecoder(SessionEvent)
 
 RECORDING_EVENTS: BasicDecoder[RecordingEvent] = BasicDecoder(RecordingEvent)
 """Decodes the events of `recording/create`."""
+
+LIVE_EVENTS: BasicDecoder[LiveEvent] = BasicDecoder(LiveEvent)
+"""Decodes the events of `live/create`."""
+
+HLS_EVENTS: BasicDecoder[HlsEvent] = BasicDecoder(HlsEvent)
+"""Decodes the events of `hls/create`."""
 
 SIGNALING_EVENTS: BasicDecoder[SignalingEvent] = BasicDecoder(SignalingEvent)
 """Decodes the events of `signaling/subscribe`."""
@@ -163,6 +179,20 @@ class ClientsCommands:
                 between each pair.
         """
         command = ClientsRemoveCommand(id=NEW, pin=pin)
+        await self._request(command)
+
+    async def add(self, *, pin: str, role: ClientRole) -> None:
+        """`clients/add`: enrolls a pin with a role.
+
+        For a client that cannot pair (a metrics scraper); only on the Unix socket. A pin
+        enrolled or fixed with the other role is refused.
+
+        Args:
+            pin: The client certificate's SHA-256, 64 hex digits, optionally with a colon
+                between each pair.
+            role: What the pin may do.
+        """
+        command = ClientsAddCommand(id=NEW, pin=pin, role=role)
         await self._request(command)
 
 
@@ -310,8 +340,8 @@ class WebrtcCommands:
         )
         await self._request(command)
 
-    async def renegotiate(self, *, sdp: str, session_id: str) -> WebrtcRenegotiateResult:
-        """`webrtc/renegotiate`: a re-offer for an answered session.
+    async def reoffer(self, *, sdp: str, session_id: str) -> WebrtcReofferResult:
+        """`webrtc/reoffer`: a re-offer for an answered session.
 
         Taken only from the connection that owns it; the result carries the answer.
 
@@ -319,8 +349,8 @@ class WebrtcCommands:
             sdp: The browser's SDP re-offer.
             session_id: The session.
         """
-        command = WebrtcRenegotiateCommand(id=NEW, sdp=sdp, session_id=session_id)
-        return WebrtcRenegotiateResult.from_dict(await self._request(command))
+        command = WebrtcReofferCommand(id=NEW, sdp=sdp, session_id=session_id)
+        return WebrtcReofferResult.from_dict(await self._request(command))
 
 
 class SessionCommands:
@@ -437,6 +467,75 @@ class RecordingCommands:
         return await self._subscribe(command, RECORDING_EVENTS, RecordingCreateResult.from_dict)
 
 
+class LiveCommands:
+    """The `live/...` commands, as `client.live.<verb>(...)`."""
+
+    def __init__(self, request: Request, subscribe: Subscribe) -> None:
+        """Bind the transport's two primitives."""
+        self._request = request
+        self._subscribe = subscribe
+
+    async def create(
+        self, *, stream_id: str, audio: bool = True
+    ) -> Subscription[LiveEvent, LiveCreateResult]:
+        """`live/create`: a live output of a stream.
+
+        Its bytes are fetched with `GET /v0/live/{live_id}`.
+
+        Args:
+            stream_id: The stream to play.
+            audio: Take the stream's audio, when the live container carries it as it is
+                (AAC-LC, Opus); any other codec is left out with an `audio_omitted` warning
+                and nothing is transcoded. `false` makes a video-only output, for a player
+                that cannot play the stream's audio.
+        """
+        command = LiveCreateCommand(id=NEW, stream_id=stream_id, audio=audio)
+        return await self._subscribe(command, LIVE_EVENTS, LiveCreateResult.from_dict)
+
+    async def close(self, *, live_id: str) -> None:
+        """`live/close`: ends a live output.
+
+        Args:
+            live_id: The live output.
+        """
+        command = LiveCloseCommand(id=NEW, live_id=live_id)
+        await self._request(command)
+
+
+class HlsCommands:
+    """The `hls/...` commands, as `client.hls.<verb>(...)`."""
+
+    def __init__(self, request: Request, subscribe: Subscribe) -> None:
+        """Bind the transport's two primitives."""
+        self._request = request
+        self._subscribe = subscribe
+
+    async def create(
+        self, *, stream_id: str, audio: bool = True
+    ) -> Subscription[HlsEvent, HlsCreateResult]:
+        """`hls/create`: an LL-HLS session of a stream.
+
+        Its playlist is fetched with `GET /v0/hls/{hls_id}/index.m3u8`.
+
+        Args:
+            stream_id: The stream to play.
+            audio: Take the stream's audio, as `live/create`'s `audio`: when the live
+                container carries it as it is (AAC-LC, Opus); any other codec is left out
+                with an `audio_omitted` warning. `false` makes a video-only session.
+        """
+        command = HlsCreateCommand(id=NEW, stream_id=stream_id, audio=audio)
+        return await self._subscribe(command, HLS_EVENTS, HlsCreateResult.from_dict)
+
+    async def close(self, *, hls_id: str) -> None:
+        """`hls/close`: ends an LL-HLS session.
+
+        Args:
+            hls_id: The session.
+        """
+        command = HlsCloseCommand(id=NEW, hls_id=hls_id)
+        await self._request(command)
+
+
 class SignalingCommands:
     """The `signaling/...` commands, as `client.signaling.<verb>(...)`."""
 
@@ -521,17 +620,21 @@ class Commands(ABC):
         self.pairing = PairingCommands(self._request, self._subscribe)
         """`pairing/create`."""
         self.clients = ClientsCommands(self._request, self._subscribe)
-        """`clients/list`, `clients/remove`."""
+        """`clients/list`, `clients/remove`, `clients/add`."""
         self.stream = StreamCommands(self._request, self._subscribe)
         """`stream/put`, `stream/get`, `stream/list`, `stream/delete`, `stream/subscribe`."""
         self.webrtc = WebrtcCommands(self._request, self._subscribe)
-        """`webrtc/offer`, `webrtc/candidate`, `webrtc/renegotiate`."""
+        """`webrtc/offer`, `webrtc/candidate`, `webrtc/reoffer`."""
         self.session = SessionCommands(self._request, self._subscribe)
         """`session/get`, `session/list`, `session/close`, `session/adopt`."""
         self.backchannel = BackchannelCommands(self._request, self._subscribe)
         """`backchannel/release`."""
         self.recording = RecordingCommands(self._request, self._subscribe)
         """`recording/create`."""
+        self.live = LiveCommands(self._request, self._subscribe)
+        """`live/create`, `live/close`."""
+        self.hls = HlsCommands(self._request, self._subscribe)
+        """`hls/create`, `hls/close`."""
         self.signaling = SignalingCommands(self._request, self._subscribe)
         """`signaling/subscribe`, `signaling/answer`, `signaling/candidate`, `signaling/error`."""
 
