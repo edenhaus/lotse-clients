@@ -2,8 +2,9 @@
 
 Async Python client for the control API of
 [rocko](https://github.com/edenhaus/rocko), the memory-safe media daemon
-for IP cameras. It speaks the API over the daemon's Unix socket with `aiohttp`;
-the payload types are frozen dataclasses decoded with `mashumaro`.
+for IP cameras. It speaks the API over the daemon's Unix socket, or over
+mutual TLS to a daemon elsewhere, with `aiohttp`; the payload types are frozen
+dataclasses decoded with `mashumaro`.
 
 ```python
 from rocko_client import RockoClient
@@ -15,6 +16,56 @@ async with RockoClient("/run/rocko/rocko.sock") as client:
         async for event in events:
             print(event)
 ```
+
+## A daemon elsewhere: mutual TLS and pairing
+
+A daemon in another container or on another host serves the same API over
+mutual TLS once its control listener is on (`ROCKO_CONTROL_LISTEN`, e.g.
+`[::]:18557`, with `ROCKO_DATA_DIR`). Each side trusts exactly the other's
+certificate: the daemon admits this client by its certificate's pin (the
+SHA-256 of its DER encoding), and the client verifies the daemon against
+exactly the daemon's certificate, by the DNS name `rocko` it carries.
+
+Pairing enrolls the client once. `rocko pair` on the daemon's host (or
+`client.pairing.create()` over the socket) prints a one-time code,
+`ROCKO1-<server pin>-<secret>`, valid for 10 minutes; a daemon that has no
+client yet logs one at startup. Give it to `pair` with a new identity:
+
+```python
+from rocko_client import RockoClient, generate_identity, pair
+
+identity = generate_identity()  # an ECDSA P-256 key and a self-signed certificate
+server_certificate = await pair("192.168.1.10", 18557, "ROCKO1-…", identity)
+# Keep identity.certificate, identity.private_key and server_certificate.
+
+async with RockoClient.remote(
+    "192.168.1.10", 18557, identity=identity, server_certificate=server_certificate
+) as client:
+    print(await client.info())
+```
+
+`pair` compares the daemon's certificate with the code's pin before the
+secret leaves the process, and sends it in one request over a connection
+that verifies the daemon against that certificate. It raises
+`ServerPinMismatchError` when another certificate answers,
+`PairingRejectedError` for a wrong secret, `PairingExpiredError` when no
+code is open (it expired, was used or was replaced) and
+`CannotConnectError` when the daemon cannot be reached; all are
+`RockoError`s, and the pairing ones `PairingError`s. A daemon certificate
+made by an older daemon lacks the name `rocko` (`ServerCertificateError`):
+`rocko identity --reissue` replaces it, and the client pairs again.
+`ClientIdentity` and `PairingCode` keep the key and the secret out of their
+`repr`.
+
+Python's `ssl` loads a certificate and key only from files, so the TLS
+context is built through a private temporary file (mode 0600), removed as
+soon as OpenSSL has read it. That is blocking I/O: `pair` and
+`RockoClient.remote` do it in a worker thread, and `client_ssl_context`,
+the blocking call itself, is there for callers that build their own. A
+`session` passed to `RockoClient.remote` or `pair` may be any TCP
+`aiohttp.ClientSession`; the TLS settings go with each request.
+
+## Commands
 
 Every command is a keyword-only method named after it: `stream/put` is
 `client.stream.put(...)`, `session/close` is `client.session.close(...)`,

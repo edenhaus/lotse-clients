@@ -8,7 +8,7 @@ class RockoError(Exception):
 
 
 class CannotConnectError(RockoError):
-    """The control socket could not be opened, or the WebSocket upgrade failed."""
+    """The daemon could not be reached (its socket, or its TLS listener), or the upgrade failed."""
 
 
 class ConnectionClosedError(RockoError):
@@ -46,3 +46,38 @@ class CommandError(RockoError):
         """For humans; it may change between versions."""
         self.details = details
         """Structured detail, per code; empty when there is none."""
+
+
+class InvalidPairingCodeError(RockoError):
+    """A pairing code is not `ROCKO1-<64 hex digits>-<32 hex digits>`."""
+
+
+class ServerPinMismatchError(RockoError):
+    """The daemon's certificate is not the one the pairing code names; the secret was not sent.
+
+    Another server answers at that address, or the code is another daemon's.
+    """
+
+
+class PairingError(RockoError):
+    """Pairing failed: the daemon did not enroll this client."""
+
+
+class PairingRejectedError(PairingError):
+    """The daemon refused the pairing code's secret (HTTP 403); the code stays open."""
+
+
+class PairingExpiredError(PairingError):
+    """No pairing code is open on the daemon: it expired, was used or was replaced (HTTP 410).
+
+    Also raised when the daemon refuses the client's certificate in the
+    handshake, which it does to an unknown client while no code is open.
+    """
+
+
+class ServerCertificateError(PairingError):
+    """The daemon's certificate lacks the DNS name `rocko`, which the client verifies.
+
+    A certificate made by an older daemon has none; `rocko identity
+    --reissue` replaces it with one that has, and the client pairs again.
+    """

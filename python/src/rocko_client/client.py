@@ -1,6 +1,7 @@
-"""The WebSocket transport to the daemon's control socket.
+"""The WebSocket transport to the daemon's control API.
 
-One long-lived WebSocket over the Unix socket, at `/v0/ws`: the daemon
+One long-lived WebSocket at `/v0/ws`, over the Unix socket or, to a remote
+daemon, over mutual TLS (`rocko_client.tls`): the daemon
 greets with `hello`, every command carries a strictly increasing `id` and
 gets exactly one `result` (`pong` for `ping`), and a subscribing command's
 `event`s carry its id. The typed command methods and their namespaces
@@ -11,7 +12,7 @@ module only moves frames.
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Protocol, Self
 
 import aiohttp
 import orjson
@@ -27,15 +28,18 @@ from rocko_client.errors import (
 )
 from rocko_client.models import Hello
 from rocko_client.subscription import Subscription
+from rocko_client.tls import SERVER_NAME, authority, client_ssl_context
 from rocko_client.version import API_VERSION, WS_PATH, accepts
 
 if TYPE_CHECKING:
+    import ssl
     from collections.abc import Callable
     from types import TracebackType
 
     from mashumaro.codecs.basic import BasicDecoder
 
     from rocko_client._base import Model
+    from rocko_client.tls import ClientIdentity
 
 type Frame = dict[str, Any]
 """One JSON object received or sent on the WebSocket."""
@@ -47,6 +51,69 @@ WS_URL = f"http://rocko{WS_PATH}"
 
 _DECODE_ERRORS = (LookupError, TypeError, ValueError)
 """What mashumaro raises for a payload that does not fit the type."""
+
+
+class _Endpoint(Protocol):
+    """Where the WebSocket is opened; `str` names it in errors and never holds a secret."""
+
+    def session(self) -> aiohttp.ClientSession:
+        """A new session of the client's own that reaches the endpoint."""
+
+    async def ws_connect(self, session: aiohttp.ClientSession) -> aiohttp.ClientWebSocketResponse:
+        """Open the WebSocket through `session`."""
+
+
+class _UnixEndpoint:
+    """The daemon's control socket."""
+
+    def __init__(self, path: str) -> None:
+        """The socket at `path`."""
+        self._path = path
+
+    def __str__(self) -> str:
+        """The socket's path."""
+        return self._path
+
+    def session(self) -> aiohttp.ClientSession:
+        """A session bound to the socket."""
+        return aiohttp.ClientSession(connector=aiohttp.UnixConnector(path=self._path))
+
+    async def ws_connect(self, session: aiohttp.ClientSession) -> aiohttp.ClientWebSocketResponse:
+        """Upgrade over the socket the session is bound to."""
+        return await session.ws_connect(WS_URL)
+
+
+class _TlsEndpoint:
+    """A daemon's control TLS listener, reached with a paired identity."""
+
+    def __init__(
+        self, host: str, port: int, identity: ClientIdentity, server_certificate: str
+    ) -> None:
+        """The listener at `host`:`port`, whose certificate is `server_certificate`."""
+        self._url = f"wss://{authority(host, port)}{WS_PATH}"
+        self._identity = identity
+        self._server_certificate = server_certificate
+        self._context: ssl.SSLContext | None = None
+
+    def __str__(self) -> str:
+        """The WebSocket URL."""
+        return self._url
+
+    def session(self) -> aiohttp.ClientSession:
+        """A plain TCP session; the TLS settings go with the upgrade request."""
+        return aiohttp.ClientSession()
+
+    async def ws_connect(self, session: aiohttp.ClientSession) -> aiohttp.ClientWebSocketResponse:
+        """Upgrade over mutual TLS, verifying the daemon against its certificate by name `rocko`.
+
+        The context is built once, in a worker thread (it does file I/O),
+        and kept for reconnects.
+        """
+        if self._context is None:
+            self._context = await asyncio.to_thread(
+                client_ssl_context, self._identity, self._server_certificate
+            )
+        return await session.ws_connect(self._url, ssl=self._context, server_hostname=SERVER_NAME)
 
 
 def _id_of(frame: Frame) -> int | None:
@@ -69,14 +136,50 @@ class RockoClient(Commands):
     Without a `session`, the client opens one on the socket and closes it
     with the connection. A `session` passed in must already be bound to
     the socket (an `aiohttp.UnixConnector`), and stays open.
+
+    `RockoClient.remote` makes a client of a remote daemon's TLS listener
+    instead; everything else is the same.
     """
 
     def __init__(
         self, socket_path: str | os.PathLike[str], *, session: aiohttp.ClientSession | None = None
     ) -> None:
-        """Prepare a client; nothing is opened until `connect`."""
+        """Prepare a client of the control socket `socket_path`; nothing opens until `connect`."""
+        self._prepare(_UnixEndpoint(os.fspath(socket_path)), session)
+
+    @classmethod
+    def remote(
+        cls,
+        host: str,
+        port: int,
+        *,
+        identity: ClientIdentity,
+        server_certificate: str,
+        session: aiohttp.ClientSession | None = None,
+    ) -> Self:
+        """Prepare a client of a daemon's control TLS listener; nothing is opened until `connect`.
+
+        `identity` must be enrolled with the daemon (`rocko_client.tls.pair`
+        does that) and `server_certificate` is the daemon's certificate, PEM,
+        as `pair` returns it: the client trusts exactly it, by the DNS name
+        `rocko`. `host` is a name or an IP address (an IPv6 one without
+        brackets), `port` the listener's (`ROCKO_CONTROL_LISTEN`).
+
+        Without a `session`, the client opens its own and closes it with the
+        connection. A `session` passed in may be any TCP session (Home
+        Assistant's shared one): the TLS settings go with the request. It
+        stays open. The TLS context is built in a worker thread on the first
+        `connect`, so a bad identity or certificate fails there, with
+        `CannotConnectError`.
+        """
+        client = cls.__new__(cls)
+        cls._prepare(client, _TlsEndpoint(host, port, identity, server_certificate), session)
+        return client
+
+    def _prepare(self, endpoint: _Endpoint, session: aiohttp.ClientSession | None) -> None:
+        """Set up a client of `endpoint`, unconnected."""
         super().__init__()
-        self._socket_path = os.fspath(socket_path)
+        self._endpoint = endpoint
         self._session = session
         self._owns_session = session is None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -109,14 +212,12 @@ class RockoClient(Commands):
             msg = "already connected"
             raise RockoError(msg)
         if self._session is None:
-            self._session = aiohttp.ClientSession(
-                connector=aiohttp.UnixConnector(path=self._socket_path)
-            )
+            self._session = self._endpoint.session()
         try:
-            ws = await self._session.ws_connect(WS_URL)
+            ws = await self._endpoint.ws_connect(self._session)
         except (aiohttp.ClientError, OSError) as err:
             await self._close_session()
-            msg = f"cannot open {self._socket_path}: {err}"
+            msg = f"cannot open {self._endpoint}: {err}"
             raise CannotConnectError(msg) from err
         try:
             hello = await self._read_hello(ws)

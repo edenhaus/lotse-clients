@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from rocko_client.tls import PAIR_PATH
 from rocko_client.version import API_VERSION, WS_PATH
 
 if TYPE_CHECKING:
+    import ssl
     from collections.abc import Awaitable, Callable
 
 BUNDLE = Path(__file__).resolve().parents[2] / "schema" / "api.json"
@@ -35,6 +37,10 @@ class FakeDaemon:
     JSON, `str` and `bytes` as they are), records every frame it receives,
     and answers each with `on_frame`, which by default sends a `pong` for
     `ping` and a successful `result` from `results` for everything else.
+
+    Started with `start_tls` instead, it listens on TCP with mutual TLS, as
+    the daemon's control listener, and answers `POST /v0/pair` with
+    `pair_answer`, recording each request's body in `pair_requests`.
     """
 
     def __init__(self, path: Path) -> None:
@@ -47,15 +53,34 @@ class FakeDaemon:
         self.on_frame: Callable[[dict[str, Any]], Awaitable[None]] = self.answer
         self.ws: web.WebSocketResponse | None = None
         self.connections = 0
+        self.pair_answer: tuple[int, bytes] = (204, b"")
+        self.pair_requests: list[bytes] = []
         self._runner: web.AppRunner | None = None
+
+    async def _serve(self) -> web.AppRunner:
+        """The application, set up."""
+        app = web.Application()
+        app.router.add_get(WS_PATH, self._handle)
+        app.router.add_post(PAIR_PATH, self._pair)
+        self._runner = web.AppRunner(app)
+        await self._runner.setup()
+        return self._runner
 
     async def start(self) -> None:
         """Listen on the socket."""
-        app = web.Application()
-        app.router.add_get(WS_PATH, self._handle)
-        self._runner = web.AppRunner(app)
-        await self._runner.setup()
-        await web.UnixSite(self._runner, str(self.path)).start()
+        await web.UnixSite(await self._serve(), str(self.path)).start()
+
+    async def start_tls(self, context: ssl.SSLContext, host: str = "127.0.0.1") -> int:
+        """Listen on a free TCP port of `host` with `context`; return the port."""
+        runner = await self._serve()
+        await web.TCPSite(runner, host, 0, ssl_context=context).start()
+        port: int = runner.addresses[0][1]
+        return port
+
+    async def _pair(self, request: web.Request) -> web.Response:
+        self.pair_requests.append(await request.read())
+        status, body = self.pair_answer
+        return web.Response(status=status, body=body or None, content_type="application/json")
 
     async def stop(self) -> None:
         """Close every connection and stop listening."""

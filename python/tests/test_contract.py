@@ -1,4 +1,4 @@
-"""The client against a real daemon over its Unix socket, as a program driving it does.
+"""The client against a real daemon over its Unix socket and its TLS listener, as a program does.
 
 The API contract layer.
 Needs `ROCKO_BIN`, a rocko binary built with the `source-fake` feature;
@@ -12,7 +12,19 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
-from rocko_client import API_VERSION, CommandError, RockoClient, Subscription
+from rocko_client import (
+    API_VERSION,
+    CannotConnectError,
+    CommandError,
+    PairingCode,
+    PairingExpiredError,
+    PairingRejectedError,
+    RockoClient,
+    Subscription,
+    certificate_pin,
+    generate_identity,
+    pair,
+)
 from rocko_client._base import Model
 from rocko_client._commands import NEW
 from rocko_client.models import (
@@ -179,3 +191,44 @@ async def test_a_session_signals_and_is_adopted_after_a_reconnect(daemon: Path) 
         assert adopted.ended
         assert (await second.session.list()).sessions == []
         await second.stream.delete(stream_id="front")
+
+
+async def test_a_client_pairs_with_a_code_and_then_connects_over_mutual_tls(
+    remote_daemon: tuple[Path, int],
+) -> None:
+    socket, port = remote_daemon
+    async with asyncio.timeout(STEP), RockoClient(socket) as local:
+        created = await local.pairing.create()
+        assert created.expires_in_ms == 600_000
+        code = PairingCode.parse(created.code)
+        wrong = PairingCode(server_pin=code.server_pin, secret="0" * 32)
+        with pytest.raises(PairingRejectedError):
+            await pair("127.0.0.1", port, wrong, generate_identity())
+        identity = generate_identity()
+        server_certificate = await pair("127.0.0.1", port, created.code, identity)
+        assert certificate_pin(server_certificate) == code.server_pin
+        with pytest.raises(PairingExpiredError):
+            # Used: the daemon refuses an unknown certificate in the handshake.
+            await pair("127.0.0.1", port, code, generate_identity())
+        (enrolled,) = (await local.clients.list()).clients
+        assert enrolled.pin.replace(":", "") == identity.pin
+        assert (enrolled.role, enrolled.fixed, enrolled.connected) == ("control", False, False)
+
+        remote = RockoClient.remote(
+            "127.0.0.1", port, identity=identity, server_certificate=server_certificate
+        )
+        async with remote:
+            assert remote.hello.api == API_VERSION
+            info = await remote.info()
+            assert "fake" in info.protocols
+            assert (await local.clients.list()).clients[0].connected
+            with pytest.raises(CommandError) as refused:
+                await remote.pairing.create()
+            assert refused.value.code == "not_permitted", "no pairing code over the listener"
+
+    stranger = RockoClient.remote(
+        "127.0.0.1", port, identity=generate_identity(), server_certificate=server_certificate
+    )
+    async with asyncio.timeout(STEP):
+        with pytest.raises(CannotConnectError):
+            await stranger.connect()

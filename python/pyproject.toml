@@ -27,7 +27,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "aiohttp>=3.12", # the WebSocket over the Unix socket
+  "aiohttp>=3.12", # the WebSocket over the Unix socket, or over mutual TLS (server_hostname)
+  # The client's own P-256 key and certificate for mutual TLS, and the daemon's pin and name.
+  # A floor two years old, so Home Assistant's pin always meets it; what is used here is older.
+  "cryptography>=42",
   "mashumaro>=3.15", # decoding and encoding the generated dataclasses
   "orjson>=3.10", # mashumaro's JSON mixin and the frames on the wire
 ]
