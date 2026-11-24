@@ -45,7 +45,7 @@ jobs:
           ref: ${{ github.event.client_payload.sha || inputs.ref || 'main' }}
           path: .rocko
           persist-credentials: false
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
       - run: mise run schema .rocko
       - name: The synced rocko commit
         id: pin
