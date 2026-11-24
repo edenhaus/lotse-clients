@@ -1,8 +1,8 @@
 """`Subscription` on its own: queueing, ending, unsubscribing."""
 
-from lotse_client import ConnectionClosedError
-from lotse_client.models import StreamEventStreamRemoved
-from lotse_client.subscription import Subscription
+from rocko_client import ConnectionClosedError
+from rocko_client.models import StreamEventStreamRemoved
+from rocko_client.subscription import Subscription
 
 REMOVED = StreamEventStreamRemoved(stream_id="front")
 

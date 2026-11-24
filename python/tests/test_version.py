@@ -2,7 +2,7 @@
 
 import pytest
 
-from lotse_client.version import API_VERSION, WS_PATH, accepts, parse
+from rocko_client.version import API_VERSION, WS_PATH, accepts, parse
 
 
 def test_the_websocket_path_carries_the_major_version() -> None:

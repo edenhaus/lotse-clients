@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 @pytest.fixture
 def socket_dir() -> Iterator[Path]:
     """A short private directory for a socket path (macOS caps them at 104 bytes)."""
-    path = Path(tempfile.mkdtemp(prefix="lotse-py-"))
+    path = Path(tempfile.mkdtemp(prefix="rocko-py-"))
     path.chmod(0o700)
     yield path
     shutil.rmtree(path, ignore_errors=True)
@@ -35,20 +35,20 @@ async def fake(socket_dir: Path) -> AsyncIterator[FakeDaemon]:
 
 
 @pytest.fixture
-def lotse_bin() -> Path:
-    """The lotse binary named by `LOTSE_BIN`, built with the `source-fake` feature."""
-    value = os.environ.get("LOTSE_BIN")
+def rocko_bin() -> Path:
+    """The rocko binary named by `ROCKO_BIN`, built with the `source-fake` feature."""
+    value = os.environ.get("ROCKO_BIN")
     if not value:
-        pytest.skip("LOTSE_BIN is not set; the python-client-tests hook sets it")
+        pytest.skip("ROCKO_BIN is not set; the python-client-tests hook sets it")
     return Path(value)
 
 
 @pytest_asyncio.fixture
-async def daemon(lotse_bin: Path, socket_dir: Path) -> AsyncIterator[Path]:
-    """A real `lotse serve` on a private socket; yields the socket path."""
-    socket = socket_dir / "lotse.sock"
+async def daemon(rocko_bin: Path, socket_dir: Path) -> AsyncIterator[Path]:
+    """A real `rocko serve` on a private socket; yields the socket path."""
+    socket = socket_dir / "rocko.sock"
     process = await asyncio.create_subprocess_exec(
-        lotse_bin,
+        rocko_bin,
         "serve",
         "--socket",
         socket,
@@ -68,7 +68,7 @@ async def daemon(lotse_bin: Path, socket_dir: Path) -> AsyncIterator[Path]:
     try:
         async with asyncio.timeout(10):
             while not socket.exists():
-                assert process.returncode is None, "lotse serve exited"
+                assert process.returncode is None, "rocko serve exited"
                 await asyncio.sleep(0.02)
         yield socket
     finally:

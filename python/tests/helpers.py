@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from lotse_client.version import API_VERSION, WS_PATH
+from rocko_client.version import API_VERSION, WS_PATH
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 BUNDLE = Path(__file__).resolve().parents[2] / "schema" / "api.json"
-"""The JSON Schema bundle, copied from lotse, that the models are generated from."""
+"""The JSON Schema bundle, copied from rocko, that the models are generated from."""
 
 HELLO = {
     "type": "hello",

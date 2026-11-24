@@ -75,8 +75,8 @@ repos:
         files: ^python/(pyproject\.toml|README\.md|LICENSE-|src/)
         pass_filenames: false
       - id: python-client-tests
-        name: python client tests (100 % coverage; the contract tests when LOTSE_BIN is set)
-        # `mise run contract` builds a daemon from a lotse checkout and sets LOTSE_BIN.
+        name: python client tests (100 % coverage; the contract tests when ROCKO_BIN is set)
+        # `mise run contract` builds a daemon from a rocko checkout and sets ROCKO_BIN.
         entry: sh -c 'cd python && uv run --locked pytest -p no:cacheprovider'
         language: system
         files: ^(schema/api\.json|python/)

@@ -4,8 +4,8 @@ import pytest
 from mashumaro.codecs.basic import BasicDecoder
 from mashumaro.exceptions import MissingField
 
-from lotse_client._commands import SESSION_EVENTS, STREAM_EVENTS
-from lotse_client.models import (
+from rocko_client._commands import SESSION_EVENTS, STREAM_EVENTS
+from rocko_client.models import (
     Hello,
     IceServer,
     RtspSource,

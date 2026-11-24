@@ -1,16 +1,16 @@
 name: sync-schema
 
-# Opens, or updates, the PR that brings lotse's API schema here and regenerates every
-# client's models and command methods. lotse's CI (ci.yml) dispatches `lotse-schema` when a push to its main
+# Opens, or updates, the PR that brings rocko's API schema here and regenerates every
+# client's models and command methods. rocko's CI (ci.yml) dispatches `rocko-schema` when a push to its main
 # changes the schema; run it by hand to sync from any ref. The PR's CI runs the contract
 # tests against that commit.
 on:
   repository_dispatch:
-    types: [lotse-schema]
+    types: [rocko-schema]
   workflow_dispatch:
     inputs:
       ref:
-        description: lotse commit, branch or tag to sync from
+        description: rocko commit, branch or tag to sync from
         default: main
 
 permissions: {}
@@ -22,18 +22,18 @@ concurrency:
 
 jobs:
   sync:
-    name: sync the schema from lotse
+    name: sync the schema from rocko
     runs-on: ubuntu-latest
     steps:
       # The app's token, not GITHUB_TOKEN: a PR opened with GITHUB_TOKEN runs no CI. The app
-      # (Contents: write, Pull requests: write) is installed on lotse and lotse-clients; both keep
-      # its client ID as the variable LOTSE_BOT_CLIENT_ID and its key as the secret
-      # LOTSE_BOT_PRIVATE_KEY.
+      # (Contents: write, Pull requests: write) is installed on rocko and rocko-clients; both keep
+      # its client ID as the variable ROCKO_BOT_CLIENT_ID and its key as the secret
+      # ROCKO_BOT_PRIVATE_KEY.
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app
         with:
-          client-id: ${{ vars.LOTSE_BOT_CLIENT_ID }}
-          private-key: ${{ secrets.LOTSE_BOT_PRIVATE_KEY }}
+          client-id: ${{ vars.ROCKO_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.ROCKO_BOT_PRIVATE_KEY }}
           permission-contents: write # push the branch
           permission-pull-requests: write # open, edit or close the PR
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,15 +41,15 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: edenhaus/lotse
+          repository: edenhaus/rocko
           ref: ${{ github.event.client_payload.sha || inputs.ref || 'main' }}
-          path: .lotse
+          path: .rocko
           persist-credentials: false
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
-      - run: mise run schema .lotse
-      - name: The synced lotse commit
+      - run: mise run schema .rocko
+      - name: The synced rocko commit
         id: pin
-        run: echo "sha=$(cat schema/lotse-commit)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(cat schema/rocko-commit)" >> "$GITHUB_OUTPUT"
       # One branch: a later sync replaces the open PR's commit, and closes the PR when main
       # already matches. A script rather than an action, so the write token reaches no
       # third-party code. mise-action's `mise install` installs the repository's git hooks;
@@ -62,18 +62,18 @@ jobs:
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
           SHA: ${{ steps.pin.outputs.sha }}
         run: |
-          branch=sync/lotse-schema
-          title="chore(schema): sync with lotse ${SHA:0:12}"
-          body="The API schema of lotse at edenhaus/lotse@$SHA, and every client's models and command methods regenerated from it.
+          branch=sync/rocko-schema
+          title="chore(schema): sync with rocko ${SHA:0:12}"
+          body="The API schema of rocko at edenhaus/rocko@$SHA, and every client's models and command methods regenerated from it.
 
-          CI runs the contract tests against that commit. A change the generators cannot follow fails them: push the fix to this branch, but know that the next schema change on lotse's main replaces the branch."
+          CI runs the contract tests against that commit. A change the generators cannot follow fails them: push the fix to this branch, but know that the next schema change on rocko's main replaces the branch."
           state="$(gh pr view "$branch" --json state --jq .state 2>/dev/null || true)"
-          git add schema python/src/lotse_client/models.py python/src/lotse_client/_commands.py \
-            python/src/lotse_client/version.py
+          git add schema python/src/rocko_client/models.py python/src/rocko_client/_commands.py \
+            python/src/rocko_client/version.py
           if git diff --cached --quiet; then
-            echo "main already matches lotse $SHA"
+            echo "main already matches rocko $SHA"
             if [ "$state" = OPEN ]; then
-              gh pr close "$branch" --delete-branch --comment "main matches lotse $SHA now."
+              gh pr close "$branch" --delete-branch --comment "main matches rocko $SHA now."
             fi
             exit 0
           fi

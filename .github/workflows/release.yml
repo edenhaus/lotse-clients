@@ -2,11 +2,11 @@ name: release
 
 # Publishes the Python client to PyPI (README.md#releasing).
 #
-# The client's version is the lotse release whose API bundle schema/api.json is, so releasing is
+# The client's version is the rocko release whose API bundle schema/api.json is, so releasing is
 # a commit on main that sets python/pyproject.toml's version to that release. This workflow then
-# checks the bundle against lotse's tag, builds the sdist and the wheel, attests them, uploads
+# checks the bundle against rocko's tag, builds the sdist and the wheel, attests them, uploads
 # them to PyPI with Trusted Publishing and records the release as the tag `<version>`, the bare
-# version as lotse tags its releases, with a GitHub release of that title carrying the same files.
+# version as rocko tags its releases, with a GitHub release of that title carrying the same files.
 # No one tags by hand: a version that already has its tag releases nothing.
 #
 # A failed run is resumed with "Re-run failed jobs"; PyPI refuses a file it already has, so a
@@ -46,11 +46,11 @@ jobs:
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("python/pyproject.toml", "rb"))["project"]["version"])')"
           tag="$version"
           if [ "$version" = 0.0.0 ]; then
-            echo "Version 0.0.0: no lotse release to follow yet, nothing to publish."
+            echo "Version 0.0.0: no rocko release to follow yet, nothing to publish."
             exit 0
           fi
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "$tag exists: lotse-client $version is released already."
+            echo "$tag exists: rocko-client $version is released already."
             exit 0
           fi
           { echo "version=$version"; echo "tag=$tag"; } >> "$GITHUB_OUTPUT"
@@ -68,19 +68,19 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: edenhaus/lotse
+          repository: edenhaus/rocko
           ref: ${{ needs.version.outputs.version }}
-          path: .lotse
-          sparse-checkout: crates/lotse-api-types/schema
+          path: .rocko
+          sparse-checkout: crates/rocko-api-types/schema
           persist-credentials: false
-      # The version promises the API of that lotse release: a client generated from another
+      # The version promises the API of that rocko release: a client generated from another
       # bundle must not carry its number.
-      - name: Check the bundle is the lotse release's
+      - name: Check the bundle is the rocko release's
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          if ! cmp -s schema/api.json .lotse/crates/lotse-api-types/schema/api.json; then
-            echo "::error::schema/api.json is not the API bundle of lotse $VERSION: sync the schema from that tag first (sync-schema with ref $VERSION)"
+          if ! cmp -s schema/api.json .rocko/crates/rocko-api-types/schema/api.json; then
+            echo "::error::schema/api.json is not the API bundle of rocko $VERSION: sync the schema from that tag first (sync-schema with ref $VERSION)"
             exit 1
           fi
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
@@ -102,7 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/lotse-client/${{ needs.version.outputs.version }}/
+      url: https://pypi.org/project/rocko-client/${{ needs.version.outputs.version }}/
     permissions:
       id-token: write # Trusted Publishing, and the Sigstore certificates of the attestations
       attestations: write # store GitHub's attestation
@@ -140,12 +140,12 @@ jobs:
         run: |
           # shellcheck disable=SC2016 # envsubst's list of the variables to replace, kept literal
           envsubst '$VERSION $GH_REPO' > notes.md <<'EOF'
-          The Python client of the control API of lotse $VERSION, generated from that release's API bundle: [lotse-client $VERSION on PyPI](https://pypi.org/project/lotse-client/$VERSION/).
+          The Python client of the control API of rocko $VERSION, generated from that release's API bundle: [rocko-client $VERSION on PyPI](https://pypi.org/project/rocko-client/$VERSION/).
 
           ## Verify
 
           ```sh
-          gh attestation verify lotse_client-$VERSION-py3-none-any.whl --repo $GH_REPO
+          gh attestation verify rocko_client-$VERSION-py3-none-any.whl --repo $GH_REPO
           ```
           EOF
           gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes.md

@@ -19,5 +19,5 @@ dist/
 .env
 .env.*
 
-# The lotse checkout CI builds the daemon from
-/.lotse/
+# The rocko checkout CI builds the daemon from
+/.rocko/
