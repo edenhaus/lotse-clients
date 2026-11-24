@@ -195,7 +195,13 @@ def _context(identity: ClientIdentity, server_certificate: str | None) -> ssl.SS
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
     else:
-        context.load_verify_locations(cadata=server_certificate)
+        try:
+            context.load_verify_locations(cadata=server_certificate)
+        except ValueError as err:
+            # An empty certificate is a ValueError, not an SSLError: made one, it fails a
+            # connection as CannotConnectError like any certificate that does not load.
+            msg = f"the daemon certificate does not load: {err}"
+            raise ssl.SSLError(msg) from err
         # The self-signed certificate is the trust anchor itself, a chain of one; Python's own
         # `create_default_context` sets this flag too (from 3.13).
         context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
@@ -274,8 +280,14 @@ async def pair(
     own = session is None
     client = aiohttp.ClientSession() if session is None else session
     try:
+        # raise_for_status=False: the statuses below are pairing's answers, also through a
+        # session passed in that raises for an error status.
         async with client.post(
-            url, json={"secret": code.secret}, ssl=context, server_hostname=SERVER_NAME
+            url,
+            json={"secret": code.secret},
+            ssl=context,
+            server_hostname=SERVER_NAME,
+            raise_for_status=False,
         ) as response:
             status = response.status
             body = await response.read()

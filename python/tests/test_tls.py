@@ -325,6 +325,21 @@ async def test_a_refused_pairing_raises_by_the_daemons_status(
     assert HEX32 not in str(raised.value)
 
 
+async def test_pairing_answers_keep_their_meaning_through_a_session_that_raises_for_status(
+    identity: ClientIdentity, daemon_certificate: tuple[str, str], tmp_path: Path
+) -> None:
+    async with tls_daemon(tmp_path, daemon_certificate, identity.certificate) as (fake, port):
+        fake.pair_answer = (
+            403,
+            b'{"code":"not_permitted","message":"the secret is not the open code\'s"}',
+        )
+        async with aiohttp.ClientSession(raise_for_status=True) as session:
+            with pytest.raises(PairingRejectedError):
+                await pair(
+                    "127.0.0.1", port, code_for(daemon_certificate[0]), identity, session=session
+                )
+
+
 async def test_a_server_with_another_certificate_than_the_codes_is_never_sent_the_secret(
     identity: ClientIdentity, daemon_certificate: tuple[str, str], tmp_path: Path
 ) -> None:
@@ -506,6 +521,15 @@ async def test_a_remote_client_with_a_broken_identity_cannot_connect_and_never_s
         await client.connect()
     assert key not in str(raised.value)
     assert "PRIVATE KEY" not in str(raised.value)
+    assert client._session is None
+
+
+async def test_a_remote_client_with_an_empty_daemon_certificate_cannot_connect(
+    identity: ClientIdentity,
+) -> None:
+    client = remote(free_port(), identity, "")
+    with pytest.raises(CannotConnectError, match="the daemon certificate does not load"):
+        await client.connect()
     assert client._session is None
 
 
