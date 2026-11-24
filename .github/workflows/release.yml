@@ -1,24 +1,25 @@
 name: release
 
-# Publishes the Python client to PyPI (README.md#releasing).
+# Publishes the Python client to PyPI when a release is published on GitHub (README.md#releasing).
 #
-# The client's version is the rocko release whose API bundle schema/api.json is, so releasing is
-# a commit on main that sets python/pyproject.toml's version to that release. This workflow then
-# checks the bundle against rocko's tag, builds the sdist and the wheel, attests them, uploads
-# them to PyPI with Trusted Publishing and records the release as the tag `<version>`, the bare
-# version as rocko tags its releases, with a GitHub release of that title carrying the same files.
-# No one tags by hand: a version that already has its tag releases nothing.
+# CI's release-notes job keeps the draft of the next release up to date from the merged PRs
+# (Release Drafter, .github/release-drafter.yml), and publishing it, by hand, tags the commit and
+# starts this. The repository keeps version 0.0.0: this run takes the version from the tag and
+# sets it in the build only. It checks that schema/api.json is the API bundle of a published rocko
+# release, so no client speaks an API no released daemon has, builds the sdist and the wheel,
+# attests them, uploads them to PyPI with Trusted Publishing, and attaches them to the release,
+# whose notes name that rocko release.
 #
 # A failed run is resumed with "Re-run failed jobs"; PyPI refuses a file it already has, so a
 # re-run of all jobs after the upload fails at the upload.
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
 
 permissions: {}
 
-# A release in progress is never cancelled; the next push waits for it.
+# One release at a time, never cancelled.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
@@ -28,65 +29,65 @@ env:
 
 jobs:
   version:
-    name: the version to release
+    name: the version from the tag
     runs-on: ubuntu-latest
-    permissions:
-      contents: read # the checkout and its tags
+    permissions: {}
     outputs:
       version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # the tags say what is released already
-          persist-credentials: false
-      - name: Read the version and look for its tag
+      # X.Y.Z only: a SemVer pre-release tag (0.1.0-rc.1) is not the PEP 440 version that PyPI and
+      # the wheel's file name would carry (0.1.0rc1).
+      - name: Check the tag
         id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("python/pyproject.toml", "rb"))["project"]["version"])')"
-          tag="$version"
-          if [ "$version" = 0.0.0 ]; then
-            echo "Version 0.0.0: no rocko release to follow yet, nothing to publish."
-            exit 0
+          if ! printf '%s\n' "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::$TAG is not X.Y.Z; Release Drafter tags releases with the bare version, no v and no pre-release"
+            exit 1
           fi
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "$tag exists: rocko-client $version is released already."
-            exit 0
-          fi
-          { echo "version=$version"; echo "tag=$tag"; } >> "$GITHUB_OUTPUT"
+          echo "version=$TAG" | tee -a "$GITHUB_OUTPUT"
 
   build:
     name: build and check the sdist and the wheel
     needs: version
-    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read # the checkout
+    outputs:
+      rocko: ${{ steps.rocko.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: edenhaus/rocko
-          ref: ${{ needs.version.outputs.version }}
-          path: .rocko
-          sparse-checkout: crates/rocko-api-types/schema
-          persist-credentials: false
-      # The version promises the API of that rocko release: a client generated from another
-      # bundle must not carry its number.
-      - name: Check the bundle is the rocko release's
+      # The newest published rocko release (pre-releases count, drafts do not) whose bundle is
+      # schema/api.json byte for byte, as `mise run schema` copies it. A release from before
+      # rocko-api-types had that name has no bundle at the path and never matches. The bundle comes
+      # through curl, not `gh api`: gh 2.105.0 rewrites the JSON escapes of control characters
+      # (`\u0000`) in what it prints, so its copy never equals the file (observed 2026-11-24).
+      - name: Find the rocko release whose API bundle this is
+        id: rocko
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }} # rocko is public; the token only lifts the rate limit
         run: |
-          if ! cmp -s schema/api.json .rocko/crates/rocko-api-types/schema/api.json; then
-            echo "::error::schema/api.json is not the API bundle of rocko $VERSION: sync the schema from that tag first (sync-schema with ref $VERSION)"
-            exit 1
-          fi
+          bundle="$RUNNER_TEMP/api.json"
+          for tag in $(gh release list -R edenhaus/rocko --exclude-drafts --limit 100 --json tagName --jq '.[].tagName'); do
+            if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github.raw+json' \
+                "https://api.github.com/repos/edenhaus/rocko/contents/crates/rocko-api-types/schema/api.json?ref=$tag" -o "$bundle" \
+              && cmp -s schema/api.json "$bundle"; then
+              echo "version=$tag" | tee -a "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::schema/api.json is the API bundle of no published rocko release: release rocko first, or sync the schema from a release (sync-schema with its tag as ref)"
+          exit 1
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           install_args: uv
           cache: false # nothing cached reaches a release job
+      - run: mise run set-version "$VERSION"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
       - run: mise run dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -121,26 +122,32 @@ jobs:
           packages-dir: dist/
 
   release:
-    name: tag and release on GitHub
-    needs: [version, publish]
+    name: attach the files to the release
+    needs: [version, build, publish]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # the tag and the release
+      contents: write # attach the files to the release and add to its notes
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
-      - name: Tag this commit and release the files
+      - name: Attach the files and complete the notes
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.version.outputs.tag }}
+          TAG: ${{ github.event.release.tag_name }}
           VERSION: ${{ needs.version.outputs.version }}
+          ROCKO: ${{ needs.build.outputs.rocko }}
         run: |
+          gh release upload "$TAG" dist/*
+          gh release view "$TAG" --json body --jq .body > notes.md
           # shellcheck disable=SC2016 # envsubst's list of the variables to replace, kept literal
-          envsubst '$VERSION $GH_REPO' > notes.md <<'EOF'
-          The Python client of the control API of rocko $VERSION, generated from that release's API bundle: [rocko-client $VERSION on PyPI](https://pypi.org/project/rocko-client/$VERSION/).
+          envsubst '$VERSION $ROCKO $GH_REPO' >> notes.md <<'EOF'
+
+          ## Install
+
+          [rocko-client $VERSION on PyPI](https://pypi.org/project/rocko-client/$VERSION/), the Python client of the control API of [rocko $ROCKO](https://github.com/edenhaus/rocko/releases/tag/$ROCKO).
 
           ## Verify
 
@@ -148,4 +155,4 @@ jobs:
           gh attestation verify rocko_client-$VERSION-py3-none-any.whl --repo $GH_REPO
           ```
           EOF
-          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes.md
+          gh release edit "$TAG" --notes-file notes.md

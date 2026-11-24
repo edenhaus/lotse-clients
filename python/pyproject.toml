@@ -5,8 +5,8 @@
 
 [project]
 name = "rocko-client"
-# The rocko release whose API bundle schema/api.json is; 0.0.0 until the first. Changing it on
-# main releases it to PyPI (.github/workflows/release.yml, ../README.md#releasing).
+# Always 0.0.0 in the repository: a release build sets the version from its tag
+# (`mise run set-version`, .github/workflows/release.yml, ../README.md#releasing).
 version = "0.0.0"
 description = "Async client for the rocko media daemon's control API"
 readme = "README.md"

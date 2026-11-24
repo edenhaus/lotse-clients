@@ -12,10 +12,12 @@ Each package's README shows how to install and use it.
 
 ## Versioning
 
-A client's version is the [rocko release](https://github.com/edenhaus/rocko/releases)
-whose API it speaks: `rocko-client` 0.1.0 is the client of rocko 0.1.0, so
-pin the daemon and the client together. Until rocko's first release the
-version is 0.0.0 and nothing is published.
+A client has versions of its own, picked by its changes: a breaking change
+raises the minor version while it is 0.x, a feature the minor, a fix the
+patch. Each release's notes name the
+[rocko release](https://github.com/edenhaus/rocko/releases) whose API it
+speaks, and a client is only released for an API a published rocko release
+has. The repository keeps the version 0.0.0; only a release build sets it.
 
 ## How the clients are generated
 
@@ -41,12 +43,16 @@ mise run dist [out]          # the Python client's sdist and wheel, checked with
 
 ## Releasing
 
-Setting the version in `python/pyproject.toml` on `main` releases it, once
-`schema/api.json` is the bundle at rocko's tag `X.Y.Z`.
-[`release`](.github/workflows/release.yml) builds the sdist and the wheel,
-publishes them to PyPI with Trusted Publishing, and tags the commit
-`X.Y.Z` with a GitHub release of that title and the same files. Verify a
-file's provenance with
+A release is publishing the draft that Release Drafter keeps on GitHub
+(`ci.yml`'s release-notes job, `.github/release-drafter.yml`): the merged
+PRs' Conventional Commit titles (`pr-title.yml`) sort its notes and pick the
+version, and publishing it tags `main` with that version, `X.Y.Z`, and starts
+[`release`](.github/workflows/release.yml). That run sets the version from
+the tag (`mise run set-version X.Y.Z`), checks that `schema/api.json` is the
+API bundle of a published rocko release, builds the sdist and the wheel,
+publishes them to PyPI with Trusted Publishing, and attaches them to the
+release with the rocko release in its notes. Never bump the version in the
+repository and never tag by hand. Verify a file's provenance with
 `gh attestation verify <file> --repo edenhaus/rocko-clients`.
 
 ## License
