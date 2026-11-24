@@ -26,27 +26,27 @@ uv run --locked --isolated --only-group release twine check --strict "$out"/*
 """
 
 [tasks.schema]
-description = "Sync schema/ with a lotse checkout's committed API bundle and regenerate every client's models and command methods (sync-schema.yml runs it)"
-usage = 'arg "[lotse]" help="the lotse checkout" default="../lotse"'
+description = "Sync schema/ with a rocko checkout's committed API bundle and regenerate every client's models and command methods (sync-schema.yml runs it)"
+usage = 'arg "[rocko]" help="the rocko checkout" default="../rocko"'
 run = """
-lotse="${usage_lotse}"
-bundle=crates/lotse-api-types/schema/api.json
-if [ -n "$(git -C "$lotse" status --porcelain -- "$bundle")" ]; then
-  echo "$lotse/$bundle has uncommitted changes: schema/lotse-commit names a commit, so commit them first" >&2
+rocko="${usage_rocko}"
+bundle=crates/rocko-api-types/schema/api.json
+if [ -n "$(git -C "$rocko" status --porcelain -- "$bundle")" ]; then
+  echo "$rocko/$bundle has uncommitted changes: schema/rocko-commit names a commit, so commit them first" >&2
   exit 1
 fi
-cp "$lotse/$bundle" schema/api.json
-git -C "$lotse" rev-parse HEAD > schema/lotse-commit
+cp "$rocko/$bundle" schema/api.json
+git -C "$rocko" rev-parse HEAD > schema/rocko-commit
 cd python && uv run --locked datamodel-codegen && uv run --locked python scripts/generate_commands.py
 """
 
 [tasks.contract]
-description = "The contract tests against a daemon built (with the fake source) from a lotse checkout"
-usage = 'arg "[lotse]" help="the lotse checkout" default="../lotse"'
+description = "The contract tests against a daemon built (with the fake source) from a rocko checkout"
+usage = 'arg "[rocko]" help="the rocko checkout" default="../rocko"'
 run = """
-lotse="$(cd "${usage_lotse}" && pwd)"
-pin="$(cat schema/lotse-commit)"
-[ "$(git -C "$lotse" rev-parse HEAD)" = "$pin" ] || echo "warning: $lotse is not at the pinned commit $pin" >&2
-(cd "$lotse" && cargo build -q --workspace --all-features --locked --bin lotse)
-cd python && LOTSE_BIN="$lotse/target/debug/lotse" uv run --locked pytest -p no:cacheprovider
+rocko="$(cd "${usage_rocko}" && pwd)"
+pin="$(cat schema/rocko-commit)"
+[ "$(git -C "$rocko" rev-parse HEAD)" = "$pin" ] || echo "warning: $rocko is not at the pinned commit $pin" >&2
+(cd "$rocko" && cargo build -q --workspace --all-features --locked --bin rocko)
+cd python && ROCKO_BIN="$rocko/target/debug/rocko" uv run --locked pytest -p no:cacheprovider
 """

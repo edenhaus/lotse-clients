@@ -16,18 +16,18 @@ from typing import TYPE_CHECKING, Any, Self
 import aiohttp
 import orjson
 
-from lotse_client._commands import Commands
-from lotse_client.errors import (
+from rocko_client._commands import Commands
+from rocko_client.errors import (
     ApiVersionError,
     CannotConnectError,
     CommandError,
     ConnectionClosedError,
-    LotseError,
     ProtocolError,
+    RockoError,
 )
-from lotse_client.models import Hello
-from lotse_client.subscription import Subscription
-from lotse_client.version import API_VERSION, WS_PATH, accepts
+from rocko_client.models import Hello
+from rocko_client.subscription import Subscription
+from rocko_client.version import API_VERSION, WS_PATH, accepts
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,14 +35,14 @@ if TYPE_CHECKING:
 
     from mashumaro.codecs.basic import BasicDecoder
 
-    from lotse_client._base import Model
+    from rocko_client._base import Model
 
 type Frame = dict[str, Any]
 """One JSON object received or sent on the WebSocket."""
 
 _LOGGER = logging.getLogger(__package__)
 
-WS_URL = f"http://lotse{WS_PATH}"
+WS_URL = f"http://rocko{WS_PATH}"
 """The upgrade URL; the host is ignored on a Unix socket."""
 
 _DECODE_ERRORS = (LookupError, TypeError, ValueError)
@@ -55,12 +55,12 @@ def _id_of(frame: Frame) -> int | None:
     return command_id if type(command_id) is int else None
 
 
-class LotseClient(Commands):
-    """A connection to the lotse daemon's control API.
+class RockoClient(Commands):
+    """A connection to the rocko daemon's control API.
 
     Use it as an async context manager, or call `connect` and `close`::
 
-        async with LotseClient("/run/lotse/lotse.sock") as client:
+        async with RockoClient("/run/rocko/rocko.sock") as client:
             info = await client.info()
             async with await client.stream.subscribe() as events:
                 async for event in events:
@@ -88,7 +88,7 @@ class LotseClient(Commands):
         self._reader: asyncio.Task[None] | None = None
         self._closing = False
         self._shutdown = False
-        self._closed: asyncio.Future[LotseError | None] | None = None
+        self._closed: asyncio.Future[RockoError | None] | None = None
 
     @property
     def connected(self) -> bool:
@@ -107,7 +107,7 @@ class LotseClient(Commands):
         """Open the WebSocket and read `hello`; fails unless this client accepts its API version."""
         if self._ws is not None:
             msg = "already connected"
-            raise LotseError(msg)
+            raise RockoError(msg)
         if self._session is None:
             self._session = aiohttp.ClientSession(
                 connector=aiohttp.UnixConnector(path=self._socket_path)
@@ -120,18 +120,18 @@ class LotseClient(Commands):
             raise CannotConnectError(msg) from err
         try:
             hello = await self._read_hello(ws)
-        except LotseError:
+        except RockoError:
             await ws.close()
             await self._close_session()
             raise
-        _LOGGER.debug("connected to lotse %s, API %s", hello.version, hello.api)
+        _LOGGER.debug("connected to rocko %s, API %s", hello.version, hello.api)
         self._ws = ws
         self._hello = hello
         self._next_id = 1
         self._closing = False
         self._shutdown = False
         self._closed = asyncio.get_running_loop().create_future()
-        self._reader = asyncio.create_task(self._read(ws, self._closed), name="lotse-client-reader")
+        self._reader = asyncio.create_task(self._read(ws, self._closed), name="rocko-client-reader")
         return hello
 
     @staticmethod
@@ -161,7 +161,7 @@ class LotseClient(Commands):
             self._reader = None
         await self._close_session()
 
-    async def wait_closed(self) -> LotseError | None:
+    async def wait_closed(self) -> RockoError | None:
         """Wait until the connection ends; the error that ended it, `None` after `close`."""
         if self._closed is None:
             msg = "never connected"
@@ -250,13 +250,13 @@ class LotseClient(Commands):
             raise
 
     async def _read(
-        self, ws: aiohttp.ClientWebSocketResponse, closed: asyncio.Future[LotseError | None]
+        self, ws: aiohttp.ClientWebSocketResponse, closed: asyncio.Future[RockoError | None]
     ) -> None:
         """Dispatch frames until the connection ends, then fail what still waits.
 
         `closed` gets the error that ended the connection, `None` after `close`.
         """
-        error: LotseError | None = None
+        error: RockoError | None = None
         try:
             async for message in ws:
                 if message.type is aiohttp.WSMsgType.TEXT:
@@ -282,10 +282,10 @@ class LotseClient(Commands):
             self._finish(error)
             closed.set_result(error)
 
-    def _finish(self, error: LotseError | None) -> None:
+    def _finish(self, error: RockoError | None) -> None:
         """Fail pending commands and end subscriptions; `error` is `None` after `close`."""
         if error is not None:
-            _LOGGER.warning("connection to lotse ended: %s", error)
+            _LOGGER.warning("connection to rocko ended: %s", error)
         self._ws = None
         self._hello = None
         pending, self._pending = self._pending, {}
@@ -312,7 +312,7 @@ class LotseClient(Commands):
         elif kind == "event":
             self._event(frame)
         elif kind == "shutdown":
-            _LOGGER.info("lotse is shutting down")
+            _LOGGER.info("rocko is shutting down")
             self._shutdown = True
         else:
             _LOGGER.debug("ignoring a frame of type %r", kind)

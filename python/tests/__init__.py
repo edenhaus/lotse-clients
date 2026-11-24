@@ -1,1 +1,1 @@
-"""Tests of the lotse client."""
+"""Tests of the rocko client."""

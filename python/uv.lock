@@ -792,47 +792,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lotse-client"
-version = "0.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "mashumaro" },
-    { name = "orjson" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "datamodel-code-generator" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-release = [
-    { name = "twine" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.12" },
-    { name = "mashumaro", specifier = ">=3.15" },
-    { name = "orjson", specifier = ">=3.10" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "datamodel-code-generator", specifier = "==0.93.0" },
-    { name = "mypy", specifier = "==2.4.1" },
-    { name = "pytest", specifier = "==9.2.0" },
-    { name = "pytest-asyncio", specifier = "==1.4.1.post1" },
-    { name = "pytest-cov", specifier = "==7.1.0" },
-    { name = "ruff", specifier = "==0.17.4" },
-]
-release = [{ name = "twine", specifier = "==7.0.0" }]
-
-[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1536,6 +1495,47 @@ sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13
 wheels = [
     { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
 ]
+
+[[package]]
+name = "rocko-client"
+version = "0.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "mashumaro" },
+    { name = "orjson" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "datamodel-code-generator" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+release = [
+    { name = "twine" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.12" },
+    { name = "mashumaro", specifier = ">=3.15" },
+    { name = "orjson", specifier = ">=3.10" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "datamodel-code-generator", specifier = "==0.93.0" },
+    { name = "mypy", specifier = "==2.4.1" },
+    { name = "pytest", specifier = "==9.2.0" },
+    { name = "pytest-asyncio", specifier = "==1.4.1.post1" },
+    { name = "pytest-cov", specifier = "==7.1.0" },
+    { name = "ruff", specifier = "==0.17.4" },
+]
+release = [{ name = "twine", specifier = "==7.0.0" }]
 
 [[package]]
 name = "ruff"

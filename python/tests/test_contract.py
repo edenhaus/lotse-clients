@@ -1,8 +1,8 @@
 """The client against a real daemon over its Unix socket, as a program driving it does.
 
 The API contract layer.
-Needs `LOTSE_BIN`, a lotse binary built with the `source-fake` feature;
-`mise run contract` builds one from a lotse checkout and sets it.
+Needs `ROCKO_BIN`, a rocko binary built with the `source-fake` feature;
+`mise run contract` builds one from a rocko checkout and sets it.
 """
 
 import asyncio
@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
-from lotse_client import API_VERSION, CommandError, LotseClient, Subscription
-from lotse_client._base import Model
-from lotse_client._commands import NEW
-from lotse_client.models import (
+from rocko_client import API_VERSION, CommandError, RockoClient, Subscription
+from rocko_client._base import Model
+from rocko_client._commands import NEW
+from rocko_client.models import (
     RtspSource,
     SessionEvent,
     SessionEventAnswer,
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, kw_only=True)
 class FakeSource(Model):
-    """The fake source of lotse-core's test fakes: `test-util` builds only, so in no schema."""
+    """The fake source of rocko-core's test fakes: `test-util` builds only, so in no schema."""
 
     url: str
     protocol: Literal["fake"] = "fake"
@@ -101,7 +101,7 @@ async def next_of[T](events: Subscription[SessionEvent], kind: type[T]) -> T:
 
 
 async def test_streams_round_trip_and_fail_with_stable_codes(daemon: Path) -> None:
-    async with asyncio.timeout(STEP), LotseClient(daemon) as client:
+    async with asyncio.timeout(STEP), RockoClient(daemon) as client:
         assert client.hello.api == API_VERSION
         await client.ping()
         info = await client.info()
@@ -149,7 +149,7 @@ async def test_streams_round_trip_and_fail_with_stable_codes(daemon: Path) -> No
 
 
 async def test_a_session_signals_and_is_adopted_after_a_reconnect(daemon: Path) -> None:
-    async with asyncio.timeout(STEP), LotseClient(daemon) as first:
+    async with asyncio.timeout(STEP), RockoClient(daemon) as first:
         await first.stream.put(stream_id="front", sources=FAKE, preload=True)
         async with await first.stream.subscribe(stream_id="front") as front:
             await until_live(front, "front")
@@ -168,7 +168,7 @@ async def test_a_session_signals_and_is_adopted_after_a_reconnect(daemon: Path) 
         assert [s.session_id for s in (await first.session.list()).sessions] == ["s1"]
     assert offer.ended, "closing the connection ends its subscriptions"
 
-    async with asyncio.timeout(STEP), LotseClient(daemon) as second:
+    async with asyncio.timeout(STEP), RockoClient(daemon) as second:
         assert (await second.session.get(session_id="s1")).orphaned
         adopted = await second.session.adopt(session_id="s1")
         assert isinstance(await anext(adopted), SessionEventState), "adopt starts with the state"

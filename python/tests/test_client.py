@@ -7,17 +7,17 @@ from typing import Any
 import aiohttp
 import pytest
 
-from lotse_client import (
+from rocko_client import (
     API_VERSION,
     ApiVersionError,
     CannotConnectError,
     CommandError,
     ConnectionClosedError,
-    LotseClient,
-    LotseError,
     ProtocolError,
+    RockoClient,
+    RockoError,
 )
-from lotse_client.models import (
+from rocko_client.models import (
     RtspSource,
     SessionEventAnswer,
     SessionEventClosed,
@@ -92,7 +92,7 @@ def event(subscription: int, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def test_connect_reads_hello_and_close_ends_cleanly(fake: FakeDaemon) -> None:
-    client = LotseClient(fake.path)
+    client = RockoClient(fake.path)
     assert not client.connected
     with pytest.raises(ConnectionClosedError):
         _ = client.hello
@@ -101,7 +101,7 @@ async def test_connect_reads_hello_and_close_ends_cleanly(fake: FakeDaemon) -> N
     async with client:
         assert client.connected
         assert client.hello.outputs == ["webrtc"]
-        with pytest.raises(LotseError, match="already connected"):
+        with pytest.raises(RockoError, match="already connected"):
             await client.connect()
     assert not client.connected
     assert await client.wait_closed() is None
@@ -123,7 +123,7 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
         "session/list": {"sessions": [SESSION]},
         "recording/create": {"recording_id": "r1", "url": "/v0/recording/r1"},
     }
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         await client.ping()
         assert (await client.info()).limits.max_sessions_per_stream == 16
         assert (await client.metrics.get()).streams["front"].frames_dropped == 1
@@ -193,7 +193,7 @@ async def test_every_command_method_sends_its_frame_and_decodes_its_result(
 
 
 async def test_ids_increase_strictly_however_many_tasks_send(fake: FakeDaemon) -> None:
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         await asyncio.gather(*(client.ping() for _ in range(25)))
     assert [frame["id"] for frame in fake.received] == list(range(1, 26))
 
@@ -206,7 +206,7 @@ async def test_a_failed_command_raises_its_code_message_and_details(fake: FakeDa
             await fake.send(failure(frame["id"], "a_code_from_later"))
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         with pytest.raises(CommandError) as raised:
             await client.stream.get(stream_id="nope")
         assert raised.value.code == "stream_not_found"
@@ -224,7 +224,7 @@ async def test_an_unreadable_failure_is_a_protocol_error(fake: FakeDaemon) -> No
         await fake.send({"type": "result", "id": frame["id"], "success": False, "error": {}})
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         with pytest.raises(ProtocolError, match="unreadable failure"):
             await client.info()
 
@@ -234,7 +234,7 @@ async def test_a_result_that_is_not_an_object_is_a_protocol_error(fake: FakeDaem
         await fake.send({"type": "result", "id": frame["id"], "success": True, "result": [1]})
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         with pytest.raises(ProtocolError, match="not an object"):
             await client.info()
 
@@ -257,8 +257,8 @@ async def test_frames_for_nothing_pending_and_unknown_frames_are_ignored(
         await fake.answer(frame)
 
     fake.on_frame = on_frame
-    with caplog.at_level(logging.DEBUG, logger="lotse_client"):
-        async with LotseClient(fake.path) as client:
+    with caplog.at_level(logging.DEBUG, logger="rocko_client"):
+        async with RockoClient(fake.path) as client:
             await client.ping()
     messages = [record.getMessage() for record in caplog.records]
     assert sum("no pending command" in m for m in messages) == 2
@@ -285,8 +285,8 @@ async def test_a_session_subscription_yields_its_events_and_ends_after_closed(
             await fake.send(event(sub, payload))
 
     fake.on_frame = on_frame
-    with caplog.at_level(logging.DEBUG, logger="lotse_client"):
-        async with LotseClient(fake.path) as client:
+    with caplog.at_level(logging.DEBUG, logger="rocko_client"):
+        async with RockoClient(fake.path) as client:
             offer = await client.webrtc.offer(stream_id="front", sdp="v=0")
             events = [e async for e in offer]
             assert offer.ended
@@ -312,7 +312,7 @@ async def test_unsubscribe_keeps_an_event_sent_before_its_result(fake: FakeDaemo
         await fake.answer(frame)
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         async with await client.stream.subscribe() as streams:
             pass
         assert streams.ended
@@ -331,7 +331,7 @@ async def test_a_failed_subscribe_raises_and_leaves_no_subscription(fake: FakeDa
         await fake.send(event(frame["id"], {"type": "stream_removed", "stream_id": "x"}))
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         with pytest.raises(CommandError, match="stream_not_found"):
             await client.stream.subscribe(stream_id="nope")
         assert client._subscriptions == {}
@@ -345,7 +345,7 @@ async def test_the_daemon_closing_fails_what_waits(fake: FakeDaemon) -> None:
             await fake.answer(frame)
 
     fake.on_frame = on_frame
-    client = LotseClient(fake.path)
+    client = RockoClient(fake.path)
     await client.connect()
     streams = await client.stream.subscribe()
     with pytest.raises(ConnectionClosedError, match="the daemon closed the connection"):
@@ -367,7 +367,7 @@ async def test_a_shutdown_frame_names_the_reason(fake: FakeDaemon) -> None:
         await fake.close_connection()
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         with pytest.raises(ConnectionClosedError, match="the daemon shut down"):
             await client.ping()
 
@@ -381,13 +381,13 @@ async def test_a_shutdown_frame_names_the_reason(fake: FakeDaemon) -> None:
     ],
 )
 async def test_a_frame_outside_the_contract_ends_the_connection(
-    fake: FakeDaemon, frame: str | bytes, error: type[LotseError], match: str
+    fake: FakeDaemon, frame: str | bytes, error: type[RockoError], match: str
 ) -> None:
     async def on_frame(_: dict[str, Any]) -> None:
         await fake.send(frame)
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         with pytest.raises(error, match=match):
             await client.ping()
         assert isinstance(await client.wait_closed(), error)
@@ -403,10 +403,10 @@ async def test_a_frame_outside_the_contract_ends_the_connection(
     ],
 )
 async def test_a_wrong_greeting_fails_connect(
-    fake: FakeDaemon, hello: object, error: type[LotseError], match: str
+    fake: FakeDaemon, hello: object, error: type[RockoError], match: str
 ) -> None:
     fake.hello = hello
-    client = LotseClient(fake.path)
+    client = RockoClient(fake.path)
     with pytest.raises(error, match=match) as raised:
         await client.connect()
     assert not client.connected
@@ -416,7 +416,7 @@ async def test_a_wrong_greeting_fails_connect(
 
 
 async def test_a_missing_socket_cannot_connect(fake: FakeDaemon) -> None:
-    client = LotseClient(fake.path.with_name("absent.sock"))
+    client = RockoClient(fake.path.with_name("absent.sock"))
     with pytest.raises(CannotConnectError, match=r"absent\.sock"):
         await client.connect()
     assert client._session is None
@@ -426,7 +426,7 @@ async def test_a_session_passed_in_stays_open_and_the_client_reconnects(fake: Fa
     async with aiohttp.ClientSession(
         connector=aiohttp.UnixConnector(path=str(fake.path))
     ) as session:
-        client = LotseClient(fake.path, session=session)
+        client = RockoClient(fake.path, session=session)
         await client.connect()
         await client.ping()
         await client.close()
@@ -442,7 +442,7 @@ async def test_a_session_passed_in_stays_open_and_the_client_reconnects(fake: Fa
 async def test_a_failed_send_is_a_closed_connection(
     fake: FakeDaemon, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         assert client._ws is not None
 
         async def broken(_: str) -> None:
@@ -463,7 +463,7 @@ async def test_a_cancelled_command_is_forgotten(fake: FakeDaemon) -> None:
             await fake.answer(frame)
 
     fake.on_frame = on_frame
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         waiting = asyncio.create_task(client.info())
         await fake.frame_received.wait()
         waiting.cancel()
@@ -475,7 +475,7 @@ async def test_a_cancelled_command_is_forgotten(fake: FakeDaemon) -> None:
 
 async def test_an_answer_for_a_command_already_given_up_is_dropped(fake: FakeDaemon) -> None:
     # The window between a cancelled wait and `_send` forgetting it.
-    async with LotseClient(fake.path) as client:
+    async with RockoClient(fake.path) as client:
         for command_id, frame in (
             (90, {"type": "result", "id": 90, "success": True, "result": {}}),
             (91, {"type": "pong", "id": 91}),
@@ -492,7 +492,7 @@ async def test_close_fails_a_command_still_waiting(fake: FakeDaemon) -> None:
         pass
 
     fake.on_frame = on_frame
-    client = LotseClient(fake.path)
+    client = RockoClient(fake.path)
     await client.connect()
     waiting = asyncio.create_task(client.info())
     await fake.frame_received.wait()

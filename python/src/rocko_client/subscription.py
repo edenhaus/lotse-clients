@@ -13,7 +13,7 @@ the connection drops.
 import asyncio
 from typing import TYPE_CHECKING, Self
 
-from lotse_client.errors import ConnectionClosedError, LotseError
+from rocko_client.errors import ConnectionClosedError, RockoError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -39,7 +39,7 @@ class Subscription[E, R = None]:
         """The events, then `None` after the last."""
         self._ended = False
         self._unsubscribing = False
-        self._error: LotseError | None = None
+        self._error: RockoError | None = None
 
     @property
     def ended(self) -> bool:
@@ -54,7 +54,7 @@ class Subscription[E, R = None]:
         if getattr(event, "type", None) == "closed":
             self.finish(None)
 
-    def finish(self, error: LotseError | None) -> None:
+    def finish(self, error: RockoError | None) -> None:
         """End iteration once the queued events are read, then raise `error` if set.
 
         Called by the transport when the subscription ends without

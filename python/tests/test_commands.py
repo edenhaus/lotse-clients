@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from lotse_client import API_VERSION
-from lotse_client._commands import Commands
+from rocko_client import API_VERSION
+from rocko_client._commands import Commands
 from scripts import generate_commands as generator
 from tests.helpers import BUNDLE
 
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
     from mashumaro.codecs.basic import BasicDecoder
 
-    from lotse_client._base import Model
-    from lotse_client.subscription import Subscription
+    from rocko_client._base import Model
+    from rocko_client.subscription import Subscription
 
 RAW: dict[str, Any] = json.loads(BUNDLE.read_text())
 MODELS_SOURCE = generator.MODELS.read_text()
@@ -217,7 +217,7 @@ def test_a_namespaced_command_becomes_a_method_of_its_namespace() -> None:
     assert "return ThingResult.from_dict(await self._request(command))" in source
     assert "self.thing = ThingCommands(self._request, self._subscribe)" in source
     assert (
-        "from lotse_client.models import (\n    Mode,\n    ThingDoCommand,\n    ThingResult,\n)"
+        "from rocko_client.models import (\n    Mode,\n    ThingDoCommand,\n    ThingResult,\n)"
         in source
     )
 

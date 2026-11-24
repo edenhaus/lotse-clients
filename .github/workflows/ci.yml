@@ -19,7 +19,7 @@ env:
 
 jobs:
   # Every prek hook on all files, the contract tests included: the same as `mise run check`
-  # with LOTSE_BIN set, against a daemon built from the lotse commit in schema/lotse-commit.
+  # with ROCKO_BIN set, against a daemon built from the rocko commit in schema/rocko-commit.
   check:
     name: every prek hook
     if: github.event_name != 'schedule'
@@ -28,26 +28,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: The pinned lotse commit
+      - name: The pinned rocko commit
         id: pin
-        run: echo "sha=$(cat schema/lotse-commit)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(cat schema/rocko-commit)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: edenhaus/lotse
+          repository: edenhaus/rocko
           ref: ${{ steps.pin.outputs.sha }}
-          path: .lotse
+          path: .rocko
           persist-credentials: false
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: .lotse -> target
+          workspaces: .rocko -> target
       - name: Build the daemon with the fake source
         # In the checkout: rust-toolchain.toml and .cargo/config.toml are read from there.
-        working-directory: .lotse
-        run: cargo build -q --workspace --all-features --locked --bin lotse
+        working-directory: .rocko
+        run: cargo build -q --workspace --all-features --locked --bin rocko
       - run: mise run check
         env:
-          LOTSE_BIN: ${{ github.workspace }}/.lotse/target/debug/lotse
+          ROCKO_BIN: ${{ github.workspace }}/.rocko/target/debug/rocko
 
   # The workflows' security audit with zizmor's online audits, which the prek hook leaves out (an
   # advisory against a pinned action, a pin no tag or branch of its repository holds, a ref both a

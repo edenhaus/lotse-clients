@@ -1,10 +1,10 @@
 """The API version this client speaks, and which daemon versions it accepts.
 
 The API follows Semantic Versioning 2.0.0, separately from the daemon's own
-version. Until lotse
+version. Until rocko
 1.0 its major version is 0, and as Cargo reads a 0.x version, a minor bump
 is breaking and a patch bump additive. This mirrors
-`lotse_api_types::version` in the Rust code.
+`rocko_api_types::version` in the Rust code.
 """
 
 import re

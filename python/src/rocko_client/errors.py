@@ -3,19 +3,19 @@
 from typing import Any
 
 
-class LotseError(Exception):
+class RockoError(Exception):
     """Base class of every error of this client."""
 
 
-class CannotConnectError(LotseError):
+class CannotConnectError(RockoError):
     """The control socket could not be opened, or the WebSocket upgrade failed."""
 
 
-class ConnectionClosedError(LotseError):
+class ConnectionClosedError(RockoError):
     """The connection closed, or was never open, while a command or subscription needed it."""
 
 
-class ApiVersionError(LotseError):
+class ApiVersionError(RockoError):
     """The daemon speaks an API version this client cannot use (`version.accepts`)."""
 
     def __init__(self, daemon: str, client: str) -> None:
@@ -25,11 +25,11 @@ class ApiVersionError(LotseError):
         self.client = client
 
 
-class ProtocolError(LotseError):
+class ProtocolError(RockoError):
     """The daemon sent something the contract does not allow."""
 
 
-class CommandError(LotseError):
+class CommandError(RockoError):
     """A command's `result` was a failure.
 
     `code` is the stable error code. It is read from the frame as a string
