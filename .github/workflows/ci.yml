@@ -49,6 +49,21 @@ jobs:
         env:
           ROCKO_BIN: ${{ github.workspace }}/.rocko/target/debug/rocko
 
+  # The draft of the next release, from the PRs merged since the last one (.github/release-drafter.yml).
+  # Publishing the draft is the release (release.yml).
+  release-notes:
+    name: release notes
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-notes
+      cancel-in-progress: true # the newest push drafts from everything merged
+    permissions:
+      contents: write # the draft release
+      pull-requests: read # the merged PRs' titles
+    steps:
+      - uses: release-drafter/release-drafter@d1a19e60e81a7e650d00a7de9277f87e439117ea # v7.11.0
+
   # The workflows' security audit with zizmor's online audits, which the prek hook leaves out (an
   # advisory against a pinned action, a pin no tag or branch of its repository holds, a ref both a
   # tag and a branch): on main and weekly, so a finding that appears without our code changing

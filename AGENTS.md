@@ -18,6 +18,7 @@ findings to code scanning.
 | `mise run schema [rocko]` | sync `schema/` with a rocko checkout's committed bundle (default `../rocko`) and regenerate every client's models and command methods |
 | `mise run contract [rocko]` | build a daemon with the fake source from a rocko checkout and run the contract tests against it |
 | `mise run dist [out]` | the Python client's sdist and wheel (`uv build`), checked with `twine check --strict` |
+| `mise run set-version <version>` | the Python client's version and its lockfile entry; only a release build sets it, from the tag (the repository keeps 0.0.0) |
 | `cd python && uv run pytest` | the Python client's tests; `ROCKO_BIN=<rocko>/target/debug/rocko` adds the contract tests |
 
 ## Layout
@@ -53,8 +54,11 @@ its regeneration to the `schema` task.
   why are in `python/pyproject.toml`) with 100 % line and branch coverage;
   test names state the behavior. A ruff bump changes the hook's `rev` and
   the pin in `python/pyproject.toml` together.
-- Python: the package's version is the rocko release whose bundle
-  `schema/api.json` is (0.0.0 before the first). Changing it on `main` is
-  the release: `release.yml` publishes to PyPI and tags
-  `<version>`; never tag by hand (README.md#releasing).
-- Conventional Commits, enforced on `commit-msg`.
+- Python: the package's version is its own; the repository keeps 0.0.0.
+  A release is publishing Release Drafter's draft on GitHub: `release.yml`
+  sets the version from the tag, checks the bundle is a published rocko
+  release's, publishes to PyPI and attaches the files. Never bump the
+  version, never tag by hand (README.md#releasing).
+- Conventional Commits, enforced on `commit-msg` and on PR titles
+  (`pr-title.yml`): PRs are squash-merged, and Release Drafter sorts the
+  notes and picks the version by their titles.

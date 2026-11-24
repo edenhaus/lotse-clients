@@ -25,6 +25,12 @@ uv build --quiet --out-dir "$out"
 uv run --locked --isolated --only-group release twine check --strict "$out"/*
 """
 
+[tasks.set-version]
+description = "Set the Python client's version, and its lockfile entry; only a release build does (release.yml), the repository keeps 0.0.0"
+usage = 'arg "<version>" help="the version, X.Y.Z"'
+dir = "python"
+run = 'uv version --no-sync "${usage_version}"'
+
 [tasks.schema]
 description = "Sync schema/ with a rocko checkout's committed API bundle and regenerate every client's models and command methods (sync-schema.yml runs it)"
 usage = 'arg "[rocko]" help="the rocko checkout" default="../rocko"'

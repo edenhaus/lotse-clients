@@ -1,0 +1,52 @@
+# Release Drafter: the draft of the next release, which CI's release-notes job updates on every
+# push to main from the PRs merged since the last release. Their titles are Conventional Commits
+# (pr-title.yml), which sort them below and pick the next version. Publishing the draft on GitHub
+# is the release: release.yml sets that version, builds the Python client, publishes it to PyPI
+# and attaches the files to the release.
+#
+# The client's version is its own, not rocko's: the rocko release whose API it speaks is checked
+# and named in the notes by release.yml. While the version is 0.x, a breaking change raises the
+# minor version; from 1.0 it should raise the major one.
+
+# The release, its title and its tag are the bare version (0.1.0), no "v".
+name-template: "$RESOLVED_VERSION"
+tag-template: "$RESOLVED_VERSION"
+change-template: "- $TITLE (#$NUMBER) $AUTHORS"
+change-title-escapes: '\<*_&' # Markdown in a title stays text; Release Drafter keeps @ and # from mentioning
+sort-direction: ascending
+include-pre-releases: true
+
+categories:
+  - title: "Breaking changes"
+    semver-increment: minor # 0.x; major from 1.0
+    exclusive: true
+    when:
+      conventional:
+        breaking: true
+  - title: "Features"
+    semver-increment: minor
+    exclusive: true
+    when:
+      conventional:
+        type: feat
+  - title: "Fixes"
+    exclusive: true
+    when:
+      conventional:
+        type: fix
+  - title: "Performance"
+    exclusive: true
+    when:
+      conventional:
+        type: perf
+  - title: "Dependencies"
+    collapse-after: 0
+    exclusive: true
+    when:
+      label: dependencies # Renovate's PRs
+  # Tests, docs, CI and chores: in the notes, collapsed.
+  - title: "Maintenance"
+    collapse-after: 0
+
+template: |
+  $CHANGES
