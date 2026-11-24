@@ -139,9 +139,16 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
           VERSION: ${{ needs.version.outputs.version }}
           ROCKO: ${{ needs.build.outputs.rocko }}
+        # Safe to re-run ("Re-run failed jobs", the recovery once PyPI has the files): --clobber
+        # replaces what an earlier attempt attached with the same files of this run, and notes that
+        # already have the sections below are left as they are.
         run: |
-          gh release upload "$TAG" dist/*
+          gh release upload --clobber "$TAG" dist/*
           gh release view "$TAG" --json body --jq .body > notes.md
+          if grep -qx '## Install' notes.md; then
+            echo "The notes of $TAG are complete already."
+            exit 0
+          fi
           # shellcheck disable=SC2016 # envsubst's list of the variables to replace, kept literal
           envsubst '$VERSION $ROCKO $GH_REPO' >> notes.md <<'EOF'
 
